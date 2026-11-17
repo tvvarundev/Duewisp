@@ -10,6 +10,7 @@ final class Reminder {
     var dueDate: Date?
     var isDateOnly: Bool?
     var isCompleted = false
+    var calendarOccurrenceID: String?
     var createdAt = Date.now
     var folder: ReminderFolder?
     var repeatMode: String?
@@ -19,7 +20,11 @@ final class Reminder {
     var repeatStartDate: Date?
     var repeatEndDate: Date?
     var hasScheduledNextOccurrence: Bool?
+    var scheduledOccurrenceID: UUID?
+    var generatedOccurrenceID: UUID?
+    var generatedOccurrenceWasEdited: Bool?
     var availableAt: Date?
+    var earlyCompletionUnlockAt: Date?
     var alarmID: UUID?
     var alarmStopped: Bool?
     var alarmSnoozeMinutes: Int?
@@ -35,8 +40,8 @@ final class Reminder {
         self.dueDate = dueDate
     }
 
-    func complete(in modelContext: ModelContext) {
-        guard !isCompleted else { return }
+    func complete(in modelContext: ModelContext, at completedAt: Date = .now) {
+        guard !isCompleted, (earlyCompletionUnlockAt ?? .distantPast) <= completedAt else { return }
         isCompleted = true
         guard hasScheduledNextOccurrence != true,
               let mode = ReminderRepeatMode(rawValue: repeatMode ?? ""),
@@ -45,13 +50,16 @@ final class Reminder {
 
         let anchor = repeatAnchor ?? dueDate ?? createdAt
         guard let nextDate = mode.nextDate(
-            dueDate: dueDate, anchor: anchor, completedAt: .now, interval: interval, unit: unit,
+            dueDate: dueDate, anchor: anchor, completedAt: completedAt, interval: interval, unit: unit,
             endsOn: repeatEndDate
         ) else { return }
 
         let next = Reminder(title: title, dueDate: nextDate)
         next.isDateOnly = isDateOnly
         next.availableAt = nextDate
+        if let dueDate, dueDate > completedAt {
+            next.earlyCompletionUnlockAt = min(dueDate, nextDate)
+        }
         if alarmID != nil {
             next.alarmID = UUID()
             next.alarmSnoozeMinutes = snoozeMinutes
@@ -63,8 +71,63 @@ final class Reminder {
         next.repeatAnchor = anchor
         next.repeatStartDate = repeatStartDate
         next.repeatEndDate = repeatEndDate
+        let occurrenceID = UUID()
+        next.generatedOccurrenceID = occurrenceID
+        scheduledOccurrenceID = occurrenceID
         modelContext.insert(next)
         hasScheduledNextOccurrence = true
+    }
+
+    func reopenAsOneTime() {
+        isCompleted = false
+        availableAt = nil
+        earlyCompletionUnlockAt = nil
+        repeatMode = nil
+        repeatUnit = nil
+        repeatInterval = nil
+        repeatAnchor = nil
+        repeatStartDate = nil
+        repeatEndDate = nil
+        hasScheduledNextOccurrence = nil
+        scheduledOccurrenceID = nil
+        if generatedOccurrenceID != nil {
+            generatedOccurrenceWasEdited = true
+        }
+    }
+
+    static func laterOpenOccurrences(in reminders: [Reminder]) -> Set<PersistentIdentifier> {
+        let successors = Dictionary(grouping: reminders, by: \.generatedOccurrenceID)
+        var blocked: Set<PersistentIdentifier> = []
+        for reminder in reminders where !reminder.isCompleted && reminder.repeatMode != nil {
+            var visited: Set<UUID> = []
+            var nextID = reminder.scheduledOccurrenceID
+            while let id = nextID, visited.insert(id).inserted, let next = successors[id]?.first {
+                if !next.isCompleted && next.repeatMode != nil {
+                    blocked.insert(next.persistentModelID)
+                }
+                nextID = next.scheduledOccurrenceID
+            }
+        }
+        return blocked
+    }
+
+    func undoCompletion(in modelContext: ModelContext, snoozedAlarmIDs: Set<UUID>) throws -> Bool {
+        guard isCompleted else { return true }
+        if hasScheduledNextOccurrence == true {
+            guard let scheduledOccurrenceID else { return false }
+            let candidates = FetchDescriptor<Reminder>(predicate: #Predicate {
+                $0.generatedOccurrenceID == scheduledOccurrenceID
+            })
+            guard let next = try modelContext.fetch(candidates).first,
+                  !next.isCompleted, next.generatedOccurrenceWasEdited != true,
+                  next.alarmStopped != true,
+                  next.alarmID.map({ !snoozedAlarmIDs.contains($0) }) ?? true else { return false }
+            modelContext.delete(next)
+            hasScheduledNextOccurrence = nil
+            self.scheduledOccurrenceID = nil
+        }
+        isCompleted = false
+        return true
     }
 }
 

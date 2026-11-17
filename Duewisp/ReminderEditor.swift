@@ -433,6 +433,8 @@ struct ReminderEditor: View {
     private func save() {
         guard !invalidRepeatDates else { return }
         let item = reminder ?? Reminder(title: trimmedTitle, dueDate: selectedDueDate)
+        let originalAlarmID = item.alarmID
+        let originalSnoozeMinutes = item.alarmSnoozeMinutes
         if selectedDueDate == nil || !hasDueTime || !usesAlarm {
             item.alarmStopped = nil
             item.alarmID = nil
@@ -444,9 +446,19 @@ struct ReminderEditor: View {
         let mode = repeats ? repeatMode.rawValue : nil
         let unit = repeats ? repeatUnit.rawValue : nil
         let interval = repeats ? repeatInterval : nil
+        let dateOnly = hasDueDate && !hasDueTime ? true : nil
+        let endDate = usesRegularSchedule && hasRepeatEndDate ? calendar.startOfDay(for: repeatEndDate) : nil
         let repeatConfigurationChanged = reminder == nil || item.dueDate != selectedDueDate ||
             item.repeatMode != mode || item.repeatUnit != unit || item.repeatInterval != interval
+        let occurrenceChanged = repeatConfigurationChanged || item.title != trimmedTitle ||
+            item.isDateOnly != dateOnly || item.folder?.persistentModelID != selectedFolder?.persistentModelID ||
+            item.repeatEndDate != endDate || item.alarmID != originalAlarmID ||
+            item.alarmSnoozeMinutes != originalSnoozeMinutes
+        if item.generatedOccurrenceID != nil && occurrenceChanged {
+            item.generatedOccurrenceWasEdited = true
+        }
         if repeatConfigurationChanged {
+            item.earlyCompletionUnlockAt = nil
             if usesRegularSchedule {
                 item.repeatAnchor = regularRepeatAnchor
                 item.repeatStartDate = calendar.startOfDay(for: regularRepeatAnchor)
@@ -457,12 +469,12 @@ struct ReminderEditor: View {
         }
         item.title = trimmedTitle
         item.dueDate = selectedDueDate
-        item.isDateOnly = hasDueDate && !hasDueTime ? true : nil
+        item.isDateOnly = dateOnly
         item.folder = selectedFolder
         item.repeatMode = mode
         item.repeatUnit = unit
         item.repeatInterval = interval
-        item.repeatEndDate = usesRegularSchedule && hasRepeatEndDate ? calendar.startOfDay(for: repeatEndDate) : nil
+        item.repeatEndDate = endDate
         if reminder == nil { modelContext.insert(item) }
 
         do {

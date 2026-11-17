@@ -1,15 +1,25 @@
 import AlarmKit
+import EventKit
 import SwiftData
 import SwiftUI
 
 struct ContentView: View {
+    @AppStorage("showsCalendarItems") private var showsCalendarItems = false
+    @AppStorage("showsBirthdays") private var showsBirthdays = true
+    @AppStorage("showsAllDayEvents") private var showsAllDayEvents = true
+    @AppStorage("showsTimedEvents") private var showsTimedEvents = true
     @AppStorage("showsGroupedReminders") private var showsGroupedReminders = false
     @AppStorage("reminderHomeView") private var savedHomeView = ""
     @AppStorage("mixedExpandedFolders") private var mixedExpandedFolders = Data()
+    @Environment(\.calendar) private var calendar
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Reminder.createdAt, order: .reverse) private var reminders: [Reminder]
     @Query(sort: \ReminderFolder.name) private var folders: [ReminderFolder]
+    @State private var calendarStore: EKEventStore?
+    @State private var todayCalendarItems: [TodayCalendarRows.CalendarItem] = []
+    @State private var calendarItemsBeingCompleted: Set<String> = []
+    @State private var searchText = ""
     @State private var newReminder: NewReminder?
     @State private var reminderToEdit: Reminder?
     @State private var folderToRename: ReminderFolder?
@@ -18,7 +28,9 @@ struct ContentView: View {
     @State private var showingSaveError = false
     @State private var showingFolderOrder = false
     @State private var showingInlineFolders = false
+    @State private var showingSettings = false
     @State private var snoozedAlarmIDs: Set<UUID> = []
+    @State private var remindersBeingCompleted: Set<PersistentIdentifier> = []
 
     private enum HomeView: String {
         case folders, grouped, mixed
@@ -50,26 +62,61 @@ struct ContentView: View {
         }
     }
 
+    private var homeViewPicker: some View {
+        Picker("Home View", selection: Binding(get: { homeView }, set: { savedHomeView = $0.rawValue })) {
+            Label("Folder View", systemImage: "folder").tag(HomeView.folders)
+            Label("Grouped List", systemImage: "list.bullet").tag(HomeView.grouped)
+            Label("Mixed View", systemImage: "list.bullet.indent").tag(HomeView.mixed)
+        }
+    }
+
+    private var inlineFoldersSection: some View {
+        Section {
+            expansionToggle(Text("Today"), for: .today)
+            expansionToggle(Text("Inbox"), for: .inbox)
+            ForEach(orderedFolders) { folder in
+                Toggle(isOn: Binding {
+                    showsInline(folder)
+                } set: { isExpanded in
+                    folder.showsRemindersInline = isExpanded
+                    saveChanges()
+                }) {
+                    Text(verbatim: folder.name)
+                }
+            }
+            expansionToggle(Text("Completed"), for: .completed)
+        } footer: {
+            Text("Turn on a folder to show its reminders directly on the Mixed View home screen.")
+        }
+    }
+
+    private var settings: some View {
+        NavigationStack {
+            Form {
+                CalendarSettings(
+                    isEnabled: $showsCalendarItems,
+                    showsBirthdays: $showsBirthdays,
+                    showsAllDayEvents: $showsAllDayEvents,
+                    showsTimedEvents: $showsTimedEvents
+                )
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close Settings", systemImage: "xmark") {
+                        showingSettings = false
+                    }
+                    .labelStyle(.iconOnly)
+                }
+            }
+        }
+    }
+
     private var inlineFolderSettings: some View {
         NavigationStack {
             Form {
-                Section {
-                    expansionToggle(Text("Today"), for: .today)
-                    expansionToggle(Text("Inbox"), for: .inbox)
-                    ForEach(orderedFolders) { folder in
-                        Toggle(isOn: Binding {
-                            showsInline(folder)
-                        } set: { isExpanded in
-                            folder.showsRemindersInline = isExpanded
-                            saveChanges()
-                        }) {
-                            Text(verbatim: folder.name)
-                        }
-                    }
-                    expansionToggle(Text("Completed"), for: .completed)
-                } footer: {
-                    Text("Turn on a folder to show its reminders directly on the Mixed View home screen.")
-                }
+                inlineFoldersSection
             }
             .navigationTitle("Show Reminders Inline")
             .navigationBarTitleDisplayMode(.inline)
@@ -113,7 +160,7 @@ struct ContentView: View {
         let now = Date.now
         let calendar = Calendar.current
         let upcoming = reminders.filter { !$0.isCompleted }.flatMap { reminder in
-            [reminder.availableAt, reminder.dueDate.map { calendar.startOfDay(for: $0) }]
+                [reminder.availableAt, reminder.earlyCompletionUnlockAt, reminder.dueDate.map { calendar.startOfDay(for: $0) }]
                 .compactMap { $0 }
                 .filter { $0 > now }
         }
@@ -126,12 +173,13 @@ struct ContentView: View {
             TimelineView(reminderTimeline) { _ in
                 reminderList(at: .now)
             }
+            .searchable(text: $searchText, prompt: "Search reminders")
             .navigationDestination(for: FolderDestination.self) { destination in
                 TimelineView(reminderTimeline) { _ in
                     reminderList(at: .now, destination: destination)
                 }
                 .toolbar {
-                    if destination != .completed {
+                    if destination != .completed && destination != .upcoming {
                         ToolbarItemGroup(placement: .bottomBar) {
                             Spacer()
                             newReminderButton {
@@ -144,7 +192,7 @@ struct ContentView: View {
                                     if let folder = folders.first(where: { $0.persistentModelID == id }) {
                                         newReminder = NewReminder(folder: folder)
                                     }
-                                case .completed:
+                                case .completed, .upcoming:
                                     break
                                 }
                             }
@@ -156,12 +204,14 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("Settings", systemImage: "gearshape") {
+                        showingSettings = true
+                    }
+                    .labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu("Reminder Options", systemImage: "ellipsis.circle") {
-                        Picker("Home View", selection: Binding(get: { homeView }, set: { savedHomeView = $0.rawValue })) {
-                            Label("Folder View", systemImage: "folder").tag(HomeView.folders)
-                            Label("Grouped List", systemImage: "list.bullet").tag(HomeView.grouped)
-                            Label("Mixed View", systemImage: "list.bullet.indent").tag(HomeView.mixed)
-                        }
+                        homeViewPicker
                         if homeView == .mixed {
                             Button("Show Reminders Inline", systemImage: "checklist") {
                                 showingInlineFolders = true
@@ -198,6 +248,9 @@ struct ContentView: View {
             .sheet(isPresented: $showingFolderOrder) {
                 FolderOrderEditor(folders: orderedFolders)
             }
+            .sheet(isPresented: $showingSettings) {
+                settings
+            }
             .sheet(isPresented: $showingInlineFolders) {
                 inlineFolderSettings
             }
@@ -221,6 +274,18 @@ struct ContentView: View {
                 Text("Please try again.")
             }
         }
+        .task(id: showsCalendarItems) {
+            refreshTodayCalendar()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshTodayCalendar() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged).receive(on: RunLoop.main)) { _ in
+            if scenePhase == .active { refreshTodayCalendar() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            if scenePhase == .active { refreshTodayCalendar() }
+        }
         .task(id: alerts) {
             if let alerts {
                 await ReminderNotifications.sync(alerts)
@@ -240,6 +305,16 @@ struct ContentView: View {
         }
     }
 
+    private func refreshTodayCalendar() {
+        guard showsCalendarItems, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            todayCalendarItems = []
+            return
+        }
+        let store = calendarStore ?? EKEventStore()
+        calendarStore = store
+        todayCalendarItems = TodayCalendarRows.load(from: store, calendar: calendar)
+    }
+
     @available(iOS 26.0, *)
     private func updateSnoozedAlarms(_ alarms: [Alarm]) {
         // Duewisp alarms use countdowns only after snoozing.
@@ -247,7 +322,7 @@ struct ContentView: View {
     }
 
     private enum FolderDestination: Hashable, Codable {
-        case today, inbox, completed
+        case today, inbox, upcoming, completed
         case folder(PersistentIdentifier)
     }
 
@@ -258,6 +333,13 @@ struct ContentView: View {
             guard !reminder.isCompleted, let dueDate = reminder.dueDate else { return false }
             return calendar.compare(dueDate, to: date, toGranularity: .day) != .orderedDescending
         }
+        let upcoming = reminders.compactMap { reminder -> (reminder: Reminder, due: Date)? in
+            guard !reminder.isCompleted, let due = reminder.dueDate,
+                  calendar.compare(due, to: date, toGranularity: .day) == .orderedDescending else { return nil }
+            return (reminder, due)
+        }
+        .sorted { $0.due < $1.due }
+        .map(\.reminder)
         let completed = visible.filter(\.isCompleted)
         let todayIDs = Set(today.map(\.persistentModelID))
         let remindersByFolder = Dictionary(grouping: visible) {
@@ -274,6 +356,9 @@ struct ContentView: View {
         case .inbox:
             folder = nil
             title = String(localized: "Inbox")
+        case .upcoming:
+            folder = nil
+            title = String(localized: "Upcoming")
         case .completed:
             folder = nil
             title = String(localized: "Completed")
@@ -287,12 +372,19 @@ struct ContentView: View {
 
         let expanded = homeView == .mixed ? expandedFolders : []
 
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return List {
             switch destination {
             case .today:
                 todaySection(today)
             case .inbox:
                 folderSections(nil, reminders: inbox)
+            case .upcoming:
+                if upcoming.isEmpty {
+                    ContentUnavailableView("No Upcoming Reminders", systemImage: "calendar")
+                } else {
+                    reminderRows(upcoming, in: .upcoming)
+                }
             case .completed:
                 if completed.isEmpty {
                     ContentUnavailableView("No Completed Reminders", systemImage: "checkmark.circle")
@@ -302,6 +394,18 @@ struct ContentView: View {
             case let .folder(id):
                 if let folder {
                     folderSections(folder, reminders: remindersByFolder[id] ?? [], todayIDs: todayIDs)
+                }
+            case nil where !query.isEmpty:
+                let matches = reminders.filter { reminder in
+                    let folderName = reminder.calendarOccurrenceID == nil
+                        ? (reminder.folder?.name ?? String(localized: "Inbox"))
+                        : String(localized: "Calendar")
+                    return reminder.title.localizedStandardContains(query) || folderName.localizedStandardContains(query)
+                }
+                if matches.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                } else {
+                    reminderRows(matches, in: .search)
                 }
             case nil:
                 if homeView == .grouped {
@@ -326,6 +430,10 @@ struct ContentView: View {
                     if expanded.contains(.inbox) {
                         folderSections(nil, reminders: inbox, grouped: true)
                     }
+                }
+
+                Section {
+                    folderLink(Text("Upcoming"), icon: "calendar.badge.clock", count: upcoming.count, destination: .upcoming)
                 }
 
                 ForEach(orderedFolders) { folder in
@@ -384,7 +492,21 @@ struct ContentView: View {
                 folderHeader(name, status: today.isEmpty ? "All done" : "\(today.count) remaining", destination: .today)
             }
             reminderRows(today, in: .today)
-            TodayBirthdayRows()
+            if showsCalendarItems {
+                let completedIDs = Set(reminders.compactMap(\.calendarOccurrenceID))
+                TodayCalendarRows(
+                    items: todayCalendarItems.filter { item in
+                        guard !completedIDs.contains(item.id) else { return false }
+                        switch item.kind {
+                        case .birthday: return showsBirthdays
+                        case .allDay: return showsAllDayEvents
+                        case .timed: return showsTimedEvents
+                        }
+                    },
+                    markingIDs: calendarItemsBeingCompleted,
+                    markComplete: markCalendarItemComplete
+                )
+            }
             if grouped {
                 addReminderRow(in: name) {
                     newReminder = NewReminder(folder: nil, dueDate: .now)
@@ -490,7 +612,7 @@ struct ContentView: View {
     }
 
     private enum ReminderListSection: Hashable {
-        case today, completed, folderHistory
+        case today, upcoming, search, completed, folderHistory
         case folder(PersistentIdentifier?)
     }
 
@@ -502,10 +624,13 @@ struct ContentView: View {
     private func reminderRows(
         _ reminders: [Reminder], in section: ReminderListSection, todayIDs: Set<PersistentIdentifier> = []
     ) -> some View {
+        let blockedOccurrences = section == .upcoming ? Reminder.laterOpenOccurrences(in: self.reminders) : []
         let today = Calendar.current.startOfDay(for: .now)
         let rows = reminders.map { reminder in
             let badge: Text?
-            if section == .today, let folder = reminder.folder {
+            if reminder.calendarOccurrenceID != nil {
+                badge = Text("From Calendar")
+            } else if [.today, .upcoming, .search].contains(section), let folder = reminder.folder {
                 badge = Text("\(Image(systemName: "folder"))\u{2009}\(folder.name)")
                     .accessibilityLabel(Text("Folder: \(folder.name)"))
             } else if todayIDs.contains(reminder.persistentModelID) {
@@ -528,26 +653,36 @@ struct ContentView: View {
         }
         return ForEach(rows, id: \.id) { row in
             let reminder = row.reminder
+            let isMarkingComplete = remindersBeingCompleted.contains(row.id.reminder)
+            let isWaitingAfterEarlyCompletion = (reminder.earlyCompletionUnlockAt ?? .distantPast) > .now
+            let isBlockedOccurrence = isWaitingAfterEarlyCompletion || blockedOccurrences.contains(row.id.reminder)
+            let completionSymbol = isBlockedOccurrence ? "lock.circle" : (row.isCompleted || isMarkingComplete ? "checkmark.circle.fill" : "circle")
             let repeatDescription = repeatDetails(for: reminder)
             HStack(spacing: 0) {
                 Button {
+                    guard reminder.isCompleted else {
+                        markCompleteWithFeedback(reminder)
+                        return
+                    }
                     withAnimation {
-                        if reminder.isCompleted {
-                            reminder.isCompleted = false
+                        if reminder.calendarOccurrenceID != nil {
+                            modelContext.delete(reminder)
                         } else {
-                            reminder.complete(in: modelContext)
+                            reminder.reopenAsOneTime()
                         }
                         saveChanges()
                     }
                 } label: {
-                    Image(systemName: row.isCompleted ? "checkmark.circle.fill" : "circle")
+                    Image(systemName: completionSymbol)
                         .font(.title2)
-                        .foregroundStyle(row.isCompleted ? Color.secondary : Color.secondary.opacity(0.5))
+                        .foregroundStyle(isMarkingComplete ? Color.accentColor : row.isCompleted ? .secondary : .secondary.opacity(0.5))
+                        .contentTransition(.symbolEffect(.replace))
                         .frame(minWidth: 44, minHeight: 44, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel(row.isCompleted ? "Mark incomplete" : "Mark complete")
+                .disabled(isBlockedOccurrence)
+                .accessibilityLabel(isBlockedOccurrence ? "Completion unavailable" : isMarkingComplete ? "Completing reminder" : row.isCompleted ? "Mark incomplete" : "Mark complete")
                 .accessibilityHint(reminder.title)
 
                 Button {
@@ -573,6 +708,15 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        if isWaitingAfterEarlyCompletion, let unlock = reminder.earlyCompletionUnlockAt {
+                            Text("Can be completed from \(unlock.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if isBlockedOccurrence {
+                            Text("Complete the earlier occurrence first")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 12)
@@ -580,7 +724,8 @@ struct ContentView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Edit reminder")
+                .disabled(reminder.calendarOccurrenceID != nil)
+                .accessibilityHint(reminder.calendarOccurrenceID == nil ? "Edit reminder" : "")
 
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -590,6 +735,40 @@ struct ContentView: View {
                 modelContext.delete(reminders[index])
             }
             saveChanges()
+        }
+    }
+
+    private func markCalendarItemComplete(_ item: TodayCalendarRows.CalendarItem) {
+        guard calendarItemsBeingCompleted.insert(item.id).inserted else { return }
+        Task { @MainActor in
+            defer { calendarItemsBeingCompleted.remove(item.id) }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, !reminders.contains(where: { $0.calendarOccurrenceID == item.id }) else { return }
+            withAnimation(.smooth(duration: 0.3)) {
+                let completion = Reminder(title: item.title, dueDate: item.date)
+                completion.isDateOnly = item.kind != .timed
+                completion.isCompleted = true
+                completion.calendarOccurrenceID = item.id
+                modelContext.insert(completion)
+                saveChanges()
+            }
+        }
+    }
+
+    private func markCompleteWithFeedback(_ reminder: Reminder) {
+        let id = reminder.persistentModelID
+        guard !remindersBeingCompleted.contains(id) else { return }
+        withAnimation {
+            _ = remindersBeingCompleted.insert(id)
+        }
+        Task { @MainActor in
+            defer { remindersBeingCompleted.remove(id) }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, reminder.modelContext != nil, !reminder.isDeleted, !reminder.isCompleted else { return }
+            withAnimation(.smooth(duration: 0.3)) {
+                reminder.complete(in: modelContext)
+                saveChanges()
+            }
         }
     }
 
