@@ -6,14 +6,53 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000026 /* AlarmActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* AlarmActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000028 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000023;
+			remoteInfo = AlarmActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000025 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000026 /* AlarmActivity.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A10000000000000000000006 /* Duewisp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Duewisp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000020 /* AlarmActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = AlarmActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A10000000000000000000004 /* Duewisp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Duewisp;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000021 /* AlarmActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AlarmActivity;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000022 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +62,8 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000004 /* Duewisp */,
+				A10000000000000000000021 /* AlarmActivity */,
+				A10000000000000000000022 /* Shared */,
 				A10000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -30,6 +71,7 @@
 		A10000000000000000000005 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				A10000000000000000000020 /* AlarmActivity.appex */,
 				A10000000000000000000006 /* Duewisp.app */,
 			);
 			name = Products;
@@ -43,18 +85,42 @@
 			buildConfigurationList = A10000000000000000000009 /* Build configuration list for PBXNativeTarget "Duewisp" */;
 			buildPhases = (
 				A10000000000000000000007 /* Sources */,
+				A10000000000000000000014 /* Resources */,
+				A10000000000000000000025 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000027 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000004 /* Duewisp */,
+				A10000000000000000000022 /* Shared */,
+			);
+			name = Duewisp;
+			productName = Duewisp;
+			productReference = A10000000000000000000006 /* Duewisp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000023 /* AlarmActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000029 /* Build configuration list for PBXNativeTarget "AlarmActivity" */;
+			buildPhases = (
+				A10000000000000000000024 /* Sources */,
+				A10000000000000000000015 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				A10000000000000000000004 /* Duewisp */,
+				A10000000000000000000021 /* AlarmActivity */,
+				A10000000000000000000022 /* Shared */,
 			);
-			name = Duewisp;
-			productName = Duewisp;
-			productReference = A10000000000000000000006 /* Duewisp.app */;
-			productType = "com.apple.product-type.application";
+			name = AlarmActivity;
+			productName = AlarmActivity;
+			productReference = A10000000000000000000020 /* AlarmActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -76,10 +142,28 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				A10000000000000000000023 /* AlarmActivity */,
 				A10000000000000000000002 /* Duewisp */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000014 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000015 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000007 /* Sources */ = {
@@ -89,14 +173,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000024 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000027 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000023 /* AlarmActivity */;
+			targetProxy = A10000000000000000000028 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000010 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				SDKROOT = iphoneos;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -105,7 +207,10 @@
 		A10000000000000000000011 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				SDKROOT = iphoneos;
 			};
 			name = Release;
@@ -113,11 +218,15 @@
 		A10000000000000000000012 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BQ266KQ5D3;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Duewisp-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				CODE_SIGN_ENTITLEMENTS = Duewisp.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.duewisp.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -129,13 +238,57 @@
 		A10000000000000000000013 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BQ266KQ5D3;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Duewisp-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				CODE_SIGN_ENTITLEMENTS = Duewisp.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.duewisp.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A10000000000000000000030 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BQ266KQ5D3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "AlarmActivity-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				CODE_SIGN_ENTITLEMENTS = AlarmActivity.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.duewisp.app.AlarmActivity;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ALARM_ACTIVITY_EXTENSION";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A10000000000000000000031 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BQ266KQ5D3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "AlarmActivity-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				CODE_SIGN_ENTITLEMENTS = AlarmActivity.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.duewisp.app.AlarmActivity;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ALARM_ACTIVITY_EXTENSION";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -159,6 +312,15 @@
 			buildConfigurations = (
 				A10000000000000000000012 /* Debug */,
 				A10000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000029 /* Build configuration list for PBXNativeTarget "AlarmActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000030 /* Debug */,
+				A10000000000000000000031 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

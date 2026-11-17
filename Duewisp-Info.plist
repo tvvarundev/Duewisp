@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Duewisp uses alarms to alert you when a reminder is due.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Duewisp reads your Birthdays calendar to show birthdays in Today.</string>
+</dict>
+</plist>
