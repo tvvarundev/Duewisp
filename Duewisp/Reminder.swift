@@ -137,6 +137,7 @@ enum ReminderRepeatUnit: String, CaseIterable {
 final class ReminderFolder {
     var name: String
     var sortOrder: Int?
+    var showsRemindersInline: Bool?
 
     @Relationship(deleteRule: .nullify, inverse: \Reminder.folder)
     var reminders: [Reminder] = []

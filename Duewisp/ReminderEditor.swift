@@ -211,7 +211,7 @@ struct ReminderEditor: View {
                     } header: {
                         Text("Repeat")
                     } footer: {
-                        Text("Regular repeats count from the selected date, or today if Date is off. Repeats after completion count from when you finish.")
+                        Text("Regular repeats start from the selected date and default to today. Repeats after completion count from when you finish.")
                     }
                 }
                 .onChange(of: expandedPicker) {
@@ -227,6 +227,11 @@ struct ReminderEditor: View {
             .onChange(of: snoozeMinutes) { titleFocused = false }
             .onChange(of: repeats) { titleFocused = false }
             .onChange(of: repeatMode) { titleFocused = false }
+            .onChange(of: usesRegularSchedule) { _, isRegular in
+                if isRegular {
+                    enableDateIfNeeded()
+                }
+            }
             .onChange(of: hasRepeatEndDate) { titleFocused = false }
             .onChange(of: repeatEndDate) { titleFocused = false }
             .navigationTitle(reminder == nil ? "New Reminder" : "Edit Reminder")
