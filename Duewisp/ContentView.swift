@@ -20,6 +20,10 @@ struct ContentView: View {
     @State private var todayCalendarItems: [TodayCalendarRows.CalendarItem] = []
     @State private var calendarItemsBeingCompleted: Set<String> = []
     @State private var searchText = ""
+    @State private var openedFolder: FolderDestination?
+    @State private var reminderEditMode: EditMode = .inactive
+    @State private var selectedReminderRows: Set<ReminderRowID> = []
+    @State private var pendingDeletionIDs: Set<PersistentIdentifier>?
     @State private var newReminder: NewReminder?
     @State private var reminderToEdit: Reminder?
     @State private var folderToRename: ReminderFolder?
@@ -31,6 +35,15 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var snoozedAlarmIDs: Set<UUID> = []
     @State private var remindersBeingCompleted: Set<PersistentIdentifier> = []
+
+    private var isSelectingReminders: Bool {
+        reminderEditMode.isEditing || !selectedReminderRows.isEmpty
+    }
+
+    private var selectionTitle: String {
+        let count = Set(selectedReminderRows.map(\.reminder)).count
+        return count == 0 ? String(localized: "Select Reminders") : String(localized: "\(count) Selected")
+    }
 
     private enum HomeView: String {
         case folders, grouped, mixed
@@ -174,68 +187,41 @@ struct ContentView: View {
                 reminderList(at: .now)
             }
             .searchable(text: $searchText, prompt: "Search reminders")
-            .navigationDestination(for: FolderDestination.self) { destination in
+            .navigationDestination(item: $openedFolder) { destination in
                 TimelineView(reminderTimeline) { _ in
                     reminderList(at: .now, destination: destination)
                 }
-                .toolbar {
-                    if destination != .completed && destination != .upcoming {
-                        ToolbarItemGroup(placement: .bottomBar) {
-                            Spacer()
-                            newReminderButton {
-                                switch destination {
-                                case .today:
-                                    newReminder = NewReminder(folder: nil, dueDate: .now)
-                                case .inbox:
-                                    newReminder = NewReminder(folder: nil)
-                                case let .folder(id):
-                                    if let folder = folders.first(where: { $0.persistentModelID == id }) {
-                                        newReminder = NewReminder(folder: folder)
-                                    }
-                                case .completed, .upcoming:
-                                    break
+                .navigationTitle(isSelectingReminders ? selectionTitle : name(for: destination))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { reminderToolbar(for: destination) }
+                .toolbar(isSelectingReminders ? .visible : .automatic, for: .bottomBar)
+            }
+            .navigationTitle(isSelectingReminders ? selectionTitle : String(localized: "Reminders"))
+            .navigationBarTitleDisplayMode(isSelectingReminders ? .inline : .large)
+            .toolbar(isSelectingReminders ? .visible : .automatic, for: .bottomBar)
+            .toolbar {
+                reminderToolbar(for: nil)
+                if !isSelectingReminders {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Settings", systemImage: "gearshape") {
+                            showingSettings = true
+                        }
+                        .labelStyle(.iconOnly)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu("Reminder Options", systemImage: "ellipsis.circle") {
+                            homeViewPicker
+                            if homeView == .mixed {
+                                Button("Show Reminders Inline", systemImage: "checklist") {
+                                    showingInlineFolders = true
                                 }
                             }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Reminders")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Settings", systemImage: "gearshape") {
-                        showingSettings = true
-                    }
-                    .labelStyle(.iconOnly)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu("Reminder Options", systemImage: "ellipsis.circle") {
-                        homeViewPicker
-                        if homeView == .mixed {
-                            Button("Show Reminders Inline", systemImage: "checklist") {
-                                showingInlineFolders = true
+                            Divider()
+                            Button("Reorder Folders", systemImage: "arrow.up.arrow.down") {
+                                showingFolderOrder = true
                             }
+                            .disabled(folders.count < 2)
                         }
-                        Divider()
-                        Button("Reorder Folders", systemImage: "arrow.up.arrow.down") {
-                            showingFolderOrder = true
-                        }
-                        .disabled(folders.count < 2)
-                    }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button("New Folder", systemImage: "folder.badge.plus") {
-                        folderToRename = nil
-                        folderName = ""
-                        showingNamePrompt = true
-                    }
-                    .labelStyle(.iconOnly)
-
-                    Spacer()
-
-                    newReminderButton {
-                        newReminder = NewReminder(folder: nil)
                     }
                 }
             }
@@ -268,10 +254,22 @@ struct ContentView: View {
                 }
                 .disabled(trimmedFolderName.isEmpty)
             }
-            .alert("Couldn’t Save Changes", isPresented: $showingSaveError) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Please try again.")
+        }
+        .onChange(of: openedFolder) {
+            pendingDeletionIDs = nil
+            reminderEditMode = .inactive
+            selectedReminderRows.removeAll()
+        }
+        .onChange(of: searchText) {
+            selectedReminderRows.removeAll()
+        }
+        .onChange(of: homeView) {
+            reminderEditMode = .inactive
+            selectedReminderRows.removeAll()
+        }
+        .onChange(of: selectedReminderRows) { _, selection in
+            if !selection.isEmpty && reminderEditMode != .active {
+                withAnimation { reminderEditMode = .active }
             }
         }
         .task(id: showsCalendarItems) {
@@ -347,33 +345,11 @@ struct ContentView: View {
         }
         let inbox = (remindersByFolder[nil] ?? []).filter { !todayIDs.contains($0.persistentModelID) }
 
-        let folder: ReminderFolder?
-        let title: String
-        switch destination {
-        case .today:
-            folder = nil
-            title = String(localized: "Today")
-        case .inbox:
-            folder = nil
-            title = String(localized: "Inbox")
-        case .upcoming:
-            folder = nil
-            title = String(localized: "Upcoming")
-        case .completed:
-            folder = nil
-            title = String(localized: "Completed")
-        case let .folder(id):
-            folder = folders.first { $0.persistentModelID == id }
-            title = folder?.name ?? String(localized: "Folder")
-        case nil:
-            folder = nil
-            title = String(localized: "Reminders")
-        }
-
         let expanded = homeView == .mixed ? expandedFolders : []
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return List {
+        let canSelectReminders = destination != nil || homeView != .folders || !query.isEmpty
+        return List(selection: canSelectReminders ? $selectedReminderRows : nil) {
             switch destination {
             case .today:
                 todaySection(today)
@@ -392,7 +368,7 @@ struct ContentView: View {
                     reminderRows(completed, in: .completed)
                 }
             case let .folder(id):
-                if let folder {
+                if let folder = folders.first(where: { $0.persistentModelID == id }) {
                     folderSections(folder, reminders: remindersByFolder[id] ?? [], todayIDs: todayIDs)
                 }
             case nil where !query.isEmpty:
@@ -466,14 +442,141 @@ struct ContentView: View {
         .listStyle(.insetGrouped)
         .listSectionSpacing(.compact)
         .contentMargins(.top, 0, for: .scrollContent)
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(destination == nil ? .large : .inline)
+        .environment(\.editMode, $reminderEditMode)
+        .alert("Delete selected reminders?", isPresented: Binding(
+            get: { openedFolder == destination && pendingDeletionIDs != nil },
+            set: { if !$0 && openedFolder == destination { pendingDeletionIDs = nil } }
+        ), presenting: pendingDeletionIDs) { ids in
+            Button("Delete", role: .destructive) {
+                deleteSelectedReminders(ids)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Couldn’t Save Changes", isPresented: Binding(
+            get: { openedFolder == destination && showingSaveError },
+            set: { if openedFolder == destination { showingSaveError = $0 } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Please try again.")
+        }
+    }
+
+    private func name(for destination: FolderDestination) -> String {
+        switch destination {
+        case .today: String(localized: "Today")
+        case .inbox: String(localized: "Inbox")
+        case .upcoming: String(localized: "Upcoming")
+        case .completed: String(localized: "Completed")
+        case let .folder(id):
+            folders.first { $0.persistentModelID == id }?.name ?? String(localized: "Folder")
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func reminderToolbar(for destination: FolderDestination?) -> some ToolbarContent {
+        if isSelectingReminders {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done", systemImage: "checkmark", action: finishSelection)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderedProminent)
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button("Delete Selected Reminders", systemImage: "trash") {
+                    let ids = Set(selectedReminderRows.map(\.reminder))
+                    if !ids.isEmpty { pendingDeletionIDs = ids }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(selectedReminderRows.isEmpty)
+            }
+            if #available(iOS 26.0, *) {
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+            } else {
+                ToolbarItem(placement: .bottomBar) {
+                    Spacer()
+                }
+            }
+            ToolbarItem(placement: .bottomBar) {
+                Menu("Selection Options", systemImage: "ellipsis") {
+                    Button("Mark as Completed", systemImage: "largecircle.fill.circle", action: completeSelectedReminders)
+                        .disabled(completableSelection(at: .now).isEmpty)
+                }
+                .labelStyle(.iconOnly)
+                .disabled(selectedReminderRows.isEmpty)
+            }
+        } else {
+            ToolbarItemGroup(placement: .bottomBar) {
+                if destination == nil {
+                    Button("New Folder", systemImage: "folder.badge.plus") {
+                        folderToRename = nil
+                        folderName = ""
+                        showingNamePrompt = true
+                    }
+                    .labelStyle(.iconOnly)
+                }
+
+                if destination != .completed && destination != .upcoming {
+                    Spacer()
+                    newReminderButton {
+                        switch destination {
+                        case .today:
+                            newReminder = NewReminder(folder: nil, dueDate: .now)
+                        case let .folder(id):
+                            if let folder = folders.first(where: { $0.persistentModelID == id }) {
+                                newReminder = NewReminder(folder: folder)
+                            }
+                        default:
+                            newReminder = NewReminder(folder: nil)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishSelection() {
+        withAnimation {
+            selectedReminderRows.removeAll()
+            reminderEditMode = .inactive
+        }
+    }
+
+    private func deleteSelectedReminders(_ ids: Set<PersistentIdentifier>) {
+        withAnimation {
+            for reminder in reminders where !reminder.isDeleted && ids.contains(reminder.persistentModelID) {
+                modelContext.delete(reminder)
+            }
+            if saveChanges() { finishSelection() }
+        }
+    }
+
+    private func completableSelection(at date: Date) -> [Reminder] {
+        let ids = Set(selectedReminderRows.map(\.reminder))
+        let candidates = reminders.filter {
+            ids.contains($0.persistentModelID) && !$0.isDeleted && !$0.isCompleted &&
+                ($0.earlyCompletionUnlockAt ?? .distantPast) <= date
+        }
+        guard !candidates.isEmpty else { return [] }
+        let blocked = Reminder.laterOpenOccurrences(in: reminders)
+        return candidates.filter { !blocked.contains($0.persistentModelID) }
+    }
+
+    private func completeSelectedReminders() {
+        let date = Date.now
+        let candidates = completableSelection(at: date)
+        guard !candidates.isEmpty else { return }
+        withAnimation(.smooth(duration: 0.3)) {
+            for reminder in candidates {
+                reminder.complete(in: modelContext, at: date)
+            }
+            if saveChanges() { finishSelection() }
+        }
     }
 
     private func folderLink(
         _ name: Text, icon: String, count: Int, destination: FolderDestination
     ) -> some View {
-        NavigationLink(value: destination) {
+        folderNavigationRow(to: destination) {
             LabeledContent {
                 Text(count, format: .number)
                     .monospacedDigit()
@@ -483,6 +586,27 @@ struct ContentView: View {
         }
         .accessibilityLabel(name)
         .accessibilityValue(Text("Reminders: \(count)"))
+    }
+
+    private func folderNavigationRow<Label: View>(
+        to destination: FolderDestination, @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button {
+            guard openedFolder == nil else { return }
+            openedFolder = destination
+        } label: {
+            HStack(spacing: 10) {
+                label()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.forward")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .selectionDisabled()
     }
 
     private func todaySection(_ today: [Reminder], grouped: Bool = false) -> some View {
@@ -504,6 +628,7 @@ struct ContentView: View {
                         }
                     },
                     markingIDs: calendarItemsBeingCompleted,
+                    isSelectingReminders: isSelectingReminders,
                     markComplete: markCalendarItemComplete
                 )
             }
@@ -594,7 +719,7 @@ struct ContentView: View {
     private func folderHeader(
         _ name: String, status: LocalizedStringKey, destination: FolderDestination
     ) -> some View {
-        NavigationLink(value: destination) {
+        folderNavigationRow(to: destination) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(name)
                     .font(.headline)
@@ -659,82 +784,92 @@ struct ContentView: View {
             let completionSymbol = isBlockedOccurrence ? "lock.circle" : (row.isCompleted || isMarkingComplete ? "checkmark.circle.fill" : "circle")
             let repeatDescription = repeatDetails(for: reminder)
             HStack(spacing: 0) {
-                Button {
-                    guard reminder.isCompleted else {
-                        markCompleteWithFeedback(reminder)
-                        return
-                    }
-                    withAnimation {
-                        if reminder.calendarOccurrenceID != nil {
-                            modelContext.delete(reminder)
-                        } else {
-                            reminder.reopenAsOneTime()
+                if !isSelectingReminders {
+                    Button {
+                        guard reminder.isCompleted else {
+                            markCompleteWithFeedback(reminder)
+                            return
                         }
+                        withAnimation {
+                            if reminder.calendarOccurrenceID != nil {
+                                modelContext.delete(reminder)
+                            } else {
+                                reminder.reopenAsOneTime()
+                            }
+                            saveChanges()
+                        }
+                    } label: {
+                        Image(systemName: completionSymbol)
+                            .font(.title2)
+                            .foregroundStyle(isMarkingComplete ? Color.accentColor : row.isCompleted ? .secondary : .secondary.opacity(0.5))
+                            .contentTransition(.symbolEffect(.replace))
+                            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isBlockedOccurrence)
+                    .accessibilityLabel(isBlockedOccurrence ? "Completion unavailable" : isMarkingComplete ? "Completing reminder" : row.isCompleted ? "Mark incomplete" : "Mark complete")
+                    .accessibilityHint(reminder.title)
+                    .transition(.identity)
+                }
+
+                let label = VStack(alignment: .leading, spacing: 2) {
+                    Text(reminder.title)
+                        .foregroundStyle(row.isCompleted ? .secondary : .primary)
+
+                    if let dateText = row.dateText {
+                        dateText
+                            .font(.caption)
+                            .foregroundStyle(row.isOverdue ? Color.red : Color.secondary)
+                    }
+
+                    if let repeatDescription {
+                        Text(repeatDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let badge = row.badge {
+                        badge
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if isWaitingAfterEarlyCompletion, let unlock = reminder.earlyCompletionUnlockAt {
+                        Text("Can be completed from \(unlock.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if isBlockedOccurrence {
+                        Text("Complete the earlier occurrence first")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+
+                if isSelectingReminders || reminder.calendarOccurrenceID != nil {
+                    label
+                } else {
+                    Button {
+                        reminderToEdit = reminder
+                    } label: {
+                        label
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Edit reminder")
+                }
+            }
+            .tag(row.id)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .swipeActions {
+                if !isSelectingReminders {
+                    Button("Delete", systemImage: "trash", role: .destructive) {
+                        modelContext.delete(reminder)
                         saveChanges()
                     }
-                } label: {
-                    Image(systemName: completionSymbol)
-                        .font(.title2)
-                        .foregroundStyle(isMarkingComplete ? Color.accentColor : row.isCompleted ? .secondary : .secondary.opacity(0.5))
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
-                .disabled(isBlockedOccurrence)
-                .accessibilityLabel(isBlockedOccurrence ? "Completion unavailable" : isMarkingComplete ? "Completing reminder" : row.isCompleted ? "Mark incomplete" : "Mark complete")
-                .accessibilityHint(reminder.title)
-
-                Button {
-                    reminderToEdit = reminder
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(reminder.title)
-                            .foregroundStyle(row.isCompleted ? .secondary : .primary)
-
-                        if let dateText = row.dateText {
-                            dateText
-                                .font(.caption)
-                                .foregroundStyle(row.isOverdue ? Color.red : Color.secondary)
-                        }
-
-                        if let repeatDescription {
-                            Text(repeatDescription)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let badge = row.badge {
-                            badge
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if isWaitingAfterEarlyCompletion, let unlock = reminder.earlyCompletionUnlockAt {
-                            Text("Can be completed from \(unlock.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if isBlockedOccurrence {
-                            Text("Complete the earlier occurrence first")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(reminder.calendarOccurrenceID != nil)
-                .accessibilityHint(reminder.calendarOccurrenceID == nil ? "Edit reminder" : "")
-
             }
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-        }
-        .onDelete { offsets in
-            for index in offsets {
-                modelContext.delete(reminders[index])
-            }
-            saveChanges()
         }
     }
 
@@ -806,13 +941,16 @@ struct ContentView: View {
             : "Repeats every \(duration)"
     }
 
-    private func saveChanges() {
+    @discardableResult
+    private func saveChanges() -> Bool {
         do {
             try modelContext.save()
             TodayWidgetUpdates.refresh(from: modelContext)
+            return true
         } catch {
             modelContext.rollback()
             showingSaveError = true
+            return false
         }
     }
 }

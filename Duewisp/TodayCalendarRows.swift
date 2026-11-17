@@ -87,6 +87,7 @@ struct CalendarSettings: View {
 struct TodayCalendarRows: View {
     let items: [CalendarItem]
     let markingIDs: Set<String>
+    let isSelectingReminders: Bool
     let markComplete: (CalendarItem) -> Void
 
     struct CalendarItem: Identifiable {
@@ -104,19 +105,21 @@ struct TodayCalendarRows: View {
         ForEach(items) { item in
             let isMarking = markingIDs.contains(item.id)
             HStack(spacing: 0) {
-                Button {
-                    markComplete(item)
-                } label: {
-                    Image(systemName: isMarking ? "checkmark.circle.fill" : "circle")
-                        .font(.title2)
-                        .foregroundStyle(isMarking ? Color.accentColor : Color.secondary.opacity(0.5))
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
+                if !isSelectingReminders {
+                    Button {
+                        markComplete(item)
+                    } label: {
+                        Image(systemName: isMarking ? "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .foregroundStyle(isMarking ? Color.accentColor : Color.secondary.opacity(0.5))
+                            .contentTransition(.symbolEffect(.replace))
+                            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(isMarking ? "Completing calendar item" : "Mark complete")
+                    .accessibilityHint(item.title)
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(isMarking ? "Completing calendar item" : "Mark complete")
-                .accessibilityHint(item.title)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
