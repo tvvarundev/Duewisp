@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -13,22 +14,51 @@ struct DuewispWidgets: WidgetBundle {
 
 struct TodayWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: TodayWidgetSnapshot.kind, provider: TodayProvider()) { entry in
+        AppIntentConfiguration(kind: TodayWidgetSnapshot.kind, intent: ReminderWidgetSettings.self, provider: TodayProvider()) { entry in
             TodayWidgetView(entry: entry)
                 .containerBackground(.background, for: .widget)
         }
         .configurationDisplayName("Duewisp Today")
         .description("See reminders due today or overdue.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+struct ReminderWidgetSettings: WidgetConfigurationIntent {
+    static let title: LocalizedStringResource = "Reminder Folder"
+
+    @Parameter(title: "Folder")
+    var folder: WidgetReminderFolder?
+}
+
+struct WidgetReminderFolder: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Folder"
+    static let defaultQuery = WidgetReminderFolderQuery()
+
+    let id: String
+    let name: String
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
+}
+
+struct WidgetReminderFolderQuery: EntityQuery {
+    func suggestedEntities() async throws -> [WidgetReminderFolder] {
+        [WidgetReminderFolder(id: "today", name: String(localized: "Today")),
+         WidgetReminderFolder(id: "inbox", name: String(localized: "Inbox"))]
+            + (TodayWidgetSnapshot.read()?.folders ?? []).map { WidgetReminderFolder(id: $0.id, name: $0.name) }
+    }
+
+    func entities(for identifiers: [String]) async throws -> [WidgetReminderFolder] {
+        try await suggestedEntities().filter { identifiers.contains($0.id) }
     }
 }
 
 private struct TodayEntry: TimelineEntry {
     let date: Date
+    var title = String(localized: "Today")
     let items: [TodayWidgetSnapshot.Item]?
 }
 
-private struct TodayProvider: TimelineProvider {
+private struct TodayProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> TodayEntry {
         let now = Date.now
         return TodayEntry(date: now, items: [
@@ -37,32 +67,30 @@ private struct TodayProvider: TimelineProvider {
         ])
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (TodayEntry) -> Void) {
-        completion(context.isPreview ? placeholder(in: context) : entry(at: .now, snapshot: readSnapshot()))
+    func snapshot(for configuration: ReminderWidgetSettings, in context: Context) async -> TodayEntry {
+        context.isPreview ? placeholder(in: context) : entry(at: .now, snapshot: TodayWidgetSnapshot.read(), folder: configuration.folder)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<TodayEntry>) -> Void) {
+    func timeline(for configuration: ReminderWidgetSettings, in context: Context) async -> Timeline<TodayEntry> {
         let now = Date.now
-        let snapshot = readSnapshot()
+        let snapshot = TodayWidgetSnapshot.read()
         let calendar = Calendar.current
         let tomorrow = calendar.dateInterval(of: .day, for: now)?.end ?? now.addingTimeInterval(86400)
-        let availabilityChanges = snapshot?.items.compactMap { item -> Date? in
-            guard let availableAt = item.availableAt, availableAt > now, availableAt < tomorrow,
-                  item.dueDate < tomorrow else { return nil }
-            return availableAt
-        } ?? []
-        let dates = [now] + Set(availabilityChanges).sorted() + [tomorrow]
-        let nextRefresh = calendar.dateInterval(of: .day, for: tomorrow)?.end ?? tomorrow.addingTimeInterval(86400)
-        completion(Timeline(entries: dates.map { entry(at: $0, snapshot: snapshot) }, policy: .after(nextRefresh)))
+        let changes = snapshot?.items.compactMap(\.availableAt).filter { now < $0 && $0 < tomorrow } ?? []
+        let dates = [now] + Set(changes).sorted()
+        return Timeline(entries: dates.map { entry(at: $0, snapshot: snapshot, folder: configuration.folder) }, policy: .after(tomorrow))
     }
 
-    private func readSnapshot() -> TodayWidgetSnapshot? {
-        guard let url = TodayWidgetSnapshot.fileURL, let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(TodayWidgetSnapshot.self, from: data)
-    }
-
-    private func entry(at date: Date, snapshot: TodayWidgetSnapshot?) -> TodayEntry {
-        TodayEntry(date: date, items: snapshot?.dueItems(at: date))
+    private func entry(at date: Date, snapshot: TodayWidgetSnapshot?, folder: WidgetReminderFolder?) -> TodayEntry {
+        guard let folder, folder.id != "today" else {
+            return TodayEntry(date: date, items: snapshot?.dueItems(at: date))
+        }
+        let items = snapshot?.items.filter {
+            ($0.availableAt ?? .distantPast) <= date &&
+                (folder.id == "inbox" ? $0.folderID == nil : $0.folderID == folder.id)
+        }
+        let name = snapshot?.folders?.first { $0.id == folder.id }?.name ?? folder.name
+        return TodayEntry(date: date, title: name, items: items)
     }
 }
 
@@ -72,7 +100,7 @@ private struct TodayWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Today", systemImage: "checklist")
+            Label(entry.title, systemImage: "checklist")
                 .font(.headline)
                 .widgetAccentable()
 
@@ -83,7 +111,7 @@ private struct TodayWidgetView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ViewThatFits(in: .vertical) {
-                        reminderList(items, limit: family == .systemSmall ? 2 : 3)
+                        reminderList(items, limit: family == .systemLarge ? 8 : family == .systemMedium ? 3 : 2)
                         reminderList(items, limit: 1)
                         Text("\(items.count) due")
                             .foregroundStyle(.secondary)
@@ -105,9 +133,20 @@ private struct TodayWidgetView: View {
         let displayed = items.prefix(limit)
         return VStack(alignment: .leading, spacing: 5) {
             ForEach(displayed.indices, id: \.self) { index in
-                Text(displayed[index].title)
-                    .font(.subheadline)
-                    .lineLimit(1)
+                let item = displayed[index]
+                HStack(spacing: 8) {
+                    if let id = item.id {
+                        Button(intent: CompleteWidgetReminder(identifier: id)) {
+                            Image(systemName: "circle")
+                                .frame(minWidth: 24, minHeight: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Complete \(item.title)"))
+                    }
+                    Text(item.title)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                }
             }
             if items.count > displayed.count {
                 Text("+\(items.count - displayed.count) more")

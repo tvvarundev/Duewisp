@@ -11,6 +11,7 @@ struct ContentView: View {
     @AppStorage("showsTimedEvents") private var showsTimedEvents = true
     @AppStorage("showsGroupedReminders") private var showsGroupedReminders = false
     @AppStorage("reminderHomeView") private var savedHomeView = ""
+    @AppStorage("homeFolderOrder") private var homeFolderOrder = Data()
     @AppStorage("mixedExpandedFolders") private var mixedExpandedFolders = Data()
     @Environment(\.calendar) private var calendar
     @Environment(\.scenePhase) private var scenePhase
@@ -182,6 +183,19 @@ struct ContentView: View {
         folders.sorted { ($0.sortOrder ?? Int.max) < ($1.sortOrder ?? Int.max) }
     }
 
+    private var orderedDestinations: [FolderDestination] {
+        let first: [FolderDestination] = homeView == .grouped
+            ? [.inbox, .today] : [.today, .inbox]
+        let defaults = first + [.upcoming] + orderedFolders.map { .folder($0.persistentModelID) } + [.completed, .deleted]
+        let saved = (try? JSONDecoder().decode([FolderDestination].self, from: homeFolderOrder)) ?? []
+        let available = Set(defaults)
+        var order = saved.filter(available.contains)
+        let missing = defaults.filter { !saved.contains($0) }
+        let insertion = order.firstIndex { $0 == .completed || $0 == .deleted } ?? order.endIndex
+        order.insert(contentsOf: missing, at: insertion)
+        return order
+    }
+
     private var alarmSchedule: AlarmSchedule {
         AlarmSchedule(
             reminders: reminders.compactMap(ReminderNotifications.Alert.init),
@@ -193,7 +207,7 @@ struct ContentView: View {
         let now = Date.now
         let calendar = Calendar.current
         let upcoming = reminders.filter { !$0.isCompleted }.flatMap { reminder in
-                [reminder.availableAt, reminder.earlyCompletionUnlockAt, reminder.dueDate.map { calendar.startOfDay(for: $0) }]
+                [reminder.availableAt, reminder.completionUnlockAt, reminder.dueDate.map { calendar.startOfDay(for: $0) }]
                 .compactMap { $0 }
                 .filter { $0 > now }
         }
@@ -366,7 +380,6 @@ struct ContentView: View {
                         Button("Reorder Folders", systemImage: "arrow.up.arrow.down") {
                             showingFolderOrder = true
                         }
-                        .disabled(folders.count < 2)
                     }
                 }
             }
@@ -375,7 +388,11 @@ struct ContentView: View {
             ReminderEditor(initialFolder: request.folder, initialDueDate: request.dueDate)
         }
         .sheet(isPresented: $showingFolderOrder) {
-            FolderOrderEditor(folders: orderedFolders)
+            FolderOrderEditor(folders: orderedDestinations, name: name(for:)) { order in
+                if let encoded = try? JSONEncoder().encode(order) {
+                    homeFolderOrder = encoded
+                }
+            }
         }
         .sheet(isPresented: $showingSettings) {
             settings
@@ -498,67 +515,65 @@ struct ContentView: View {
                     folderSections(folder, reminders: remindersByFolder[id] ?? [], todayIDs: todayIDs)
                 }
             case nil:
-                if homeView == .grouped {
-                    folderSections(nil, reminders: inbox, grouped: true)
-                    todaySection(today, grouped: true)
-                } else if expanded.contains(.today) {
-                    todaySection(today, grouped: true)
-                    if expanded.contains(.inbox) {
-                        folderSections(nil, reminders: inbox, grouped: true)
-                    } else {
-                        Section {
-                            folderLink(Text("Inbox"), icon: "tray", count: inbox.filter { !$0.isCompleted }.count, destination: .inbox)
-                        }
-                    }
-                } else {
-                    Section {
-                        folderLink(Text("Today"), icon: "calendar", count: today.count, destination: .today)
-                        if !expanded.contains(.inbox) {
-                            folderLink(Text("Inbox"), icon: "tray", count: inbox.filter { !$0.isCompleted }.count, destination: .inbox)
-                        }
-                    }
-                    if expanded.contains(.inbox) {
-                        folderSections(nil, reminders: inbox, grouped: true)
-                    }
-                }
-
-                Section {
-                    folderLink(Text("Upcoming"), icon: "calendar.badge.clock", count: upcoming.count, destination: .upcoming)
-                }
-
-                ForEach(orderedFolders) { folder in
-                    let id = folder.persistentModelID
-                    let items = remindersByFolder[id] ?? []
-                    if homeView == .grouped || (homeView == .mixed && showsInline(folder)) {
-                        folderSections(folder, reminders: items, todayIDs: todayIDs, grouped: true)
-                    } else {
-                        folderLink(Text(verbatim: folder.name), icon: "folder", count: items.filter { !$0.isCompleted }.count, destination: .folder(id))
-                            .swipeActions(allowsFullSwipe: false) {
-                                folderActions(for: folder)
+                ForEach(orderedDestinations, id: \.self) { folderDestination in
+                    switch folderDestination {
+                    case .inbox:
+                        if homeView == .grouped || expanded.contains(.inbox) {
+                            folderSections(nil, reminders: inbox, grouped: true)
+                        } else {
+                            Section {
+                                folderLink(Text("Inbox"), icon: "tray", count: inbox.filter { !$0.isCompleted }.count, destination: .inbox)
                             }
-                    }
-                }
-
-                if homeView == .grouped || expanded.contains(.completed) {
-                    if homeView == .mixed || !completed.isEmpty {
+                        }
+                    case .today:
+                        if homeView == .grouped || expanded.contains(.today) {
+                            todaySection(today, grouped: true)
+                        } else {
+                            Section {
+                                folderLink(Text("Today"), icon: "calendar", count: today.count, destination: .today)
+                            }
+                        }
+                    case .upcoming:
                         Section {
-                            folderHeader(String(localized: "Completed"), status: "\(completed.count) completed", destination: .completed, hidesDivider: isSelected(completed.first, in: .completed))
-                            reminderRows(completed, in: .completed)
+                            folderLink(Text("Upcoming"), icon: "calendar.badge.clock", count: upcoming.count, destination: .upcoming)
+                        }
+                    case .folder(let id):
+                        if let folder = folders.first(where: { $0.persistentModelID == id }) {
+                            let items = remindersByFolder[id] ?? []
+                            if homeView == .grouped || (homeView == .mixed && showsInline(folder)) {
+                                folderSections(folder, reminders: items, todayIDs: todayIDs, grouped: true)
+                            } else {
+                                folderLink(Text(verbatim: folder.name), icon: "folder", count: items.filter { !$0.isCompleted }.count, destination: .folder(id))
+                                    .swipeActions(allowsFullSwipe: false) {
+                                        folderActions(for: folder)
+                                    }
+                            }
+                        }
+                    case .completed:
+                        if (homeView == .grouped || expanded.contains(.completed)) && !completed.isEmpty {
+                            Section {
+                                folderHeader(String(localized: "Completed"), status: "\(completed.count) completed", destination: .completed, hidesDivider: isSelected(completed.first, in: .completed))
+                                reminderRows(completed, in: .completed)
+                            }
+                        } else {
+                            Section {
+                                folderLink(Text("Completed"), icon: "checkmark.circle", count: completed.count, destination: .completed)
+                            }
+                        }
+                    case .deleted:
+                        Section {
+                            folderLink(Text("Deleted"), icon: "trash", count: deletedReminders.count, destination: .deleted)
                         }
                     }
-                } else {
-                    Section {
-                        folderLink(Text("Completed"), icon: "checkmark.circle", count: completed.count, destination: .completed)
-                    }
-                }
-                Section {
-                    folderLink(Text("Deleted"), icon: "trash", count: deletedReminders.count, destination: .deleted)
                 }
             }
         }
         .listStyle(.insetGrouped)
         .listSectionSpacing(.compact)
         .contentMargins(.top, 0, for: .scrollContent)
+        // Reserve the same space under either the tab bar or the selection toolbar.
+        .ignoresSafeArea(.container, edges: .bottom)
+        .contentMargins(.bottom, 88, for: .scrollContent)
         .environment(\.editMode, isVisibleList ? $reminderEditMode : .constant(.inactive))
         .animation(.default, value: isVisibleList && reminderEditMode.isEditing)
         .alert("Delete selected reminders?", isPresented: Binding(
@@ -661,7 +676,7 @@ struct ContentView: View {
         let ids = Set(selectedReminderRows.map(\.reminder))
         let candidates = reminders.filter {
             ids.contains($0.persistentModelID) && !$0.isDeleted && !$0.isCompleted &&
-                ($0.earlyCompletionUnlockAt ?? .distantPast) <= date
+                ($0.completionUnlockAt ?? .distantPast) <= date
         }
         guard !candidates.isEmpty else { return [] }
         let blocked = Reminder.laterOpenOccurrences(in: reminders)
@@ -910,8 +925,8 @@ struct ContentView: View {
         return ForEach(rows, id: \.id) { row in
             let reminder = row.reminder
             let isMarkingComplete = remindersBeingCompleted.contains(row.id.reminder)
-            let isWaitingAfterEarlyCompletion = (reminder.earlyCompletionUnlockAt ?? .distantPast) > .now
-            let isBlockedOccurrence = isWaitingAfterEarlyCompletion || blockedOccurrences.contains(row.id.reminder)
+            let isWaitingToComplete = (reminder.completionUnlockAt ?? .distantPast) > .now
+            let isBlockedOccurrence = isWaitingToComplete || blockedOccurrences.contains(row.id.reminder)
             let completionSymbol = isBlockedOccurrence ? "lock.circle" : (row.isCompleted || isMarkingComplete ? "checkmark.circle.fill" : "circle")
             let repeatDescription = repeatDetails(for: reminder)
             let label = VStack(alignment: .leading, spacing: 2) {
@@ -934,7 +949,7 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if isWaitingAfterEarlyCompletion, let unlock = reminder.earlyCompletionUnlockAt {
+                if isWaitingToComplete, let unlock = reminder.completionUnlockAt {
                     Text("Can be completed from \(unlock.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -13,12 +13,22 @@ enum TodayWidgetUpdates {
                 predicate: #Predicate { !$0.isCompleted && $0.deletedAt == nil },
                 sortBy: [SortDescriptor(\Reminder.dueDate), SortDescriptor(\Reminder.createdAt)]
             )
-            let items = try context.fetch(query).compactMap { reminder -> TodayWidgetSnapshot.Item? in
-                guard let dueDate = reminder.dueDate else { return nil }
-                return .init(title: reminder.title, dueDate: dueDate, availableAt: reminder.availableAt)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            let items = try context.fetch(query).map { reminder in
+                TodayWidgetSnapshot.Item(
+                    title: reminder.title,
+                    id: try encoder.encode(reminder.persistentModelID).base64EncodedString(),
+                    folderID: try reminder.folder.map { try encoder.encode($0.persistentModelID).base64EncodedString() },
+                    dueDate: reminder.dueDate,
+                    availableAt: reminder.availableAt
+                )
             }
-            let previous = try? JSONDecoder().decode(TodayWidgetSnapshot.self, from: Data(contentsOf: url))
-            let snapshot = TodayWidgetSnapshot(items: items)
+            let folders = try context.fetch(FetchDescriptor<ReminderFolder>(sortBy: [SortDescriptor(\.name)])).map {
+                TodayWidgetSnapshot.Folder(id: try encoder.encode($0.persistentModelID).base64EncodedString(), name: $0.name)
+            }
+            let previous = TodayWidgetSnapshot.read()
+            let snapshot = TodayWidgetSnapshot(folders: folders, items: items)
             guard previous != snapshot else { return }
             try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
             WidgetCenter.shared.reloadTimelines(ofKind: TodayWidgetSnapshot.kind)

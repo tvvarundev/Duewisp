@@ -19,6 +19,8 @@ struct ReminderEditor: View {
     @State private var repeatMode: ReminderRepeatMode
     @State private var repeatUnit: ReminderRepeatUnit
     @State private var repeatInterval: Int
+    @State private var hasRepeatStartDate: Bool
+    @State private var repeatStartDate: Date
     @State private var hasRepeatEndDate: Bool
     @State private var repeatEndDate: Date
     @State private var showingSaveError = false
@@ -26,7 +28,7 @@ struct ReminderEditor: View {
     private let reminder: Reminder?
 
     private enum DuePicker {
-        case date, time, alarm, repeatInterval, endDate
+        case date, time, alarm, repeatInterval, startDate, endDate
     }
 
     init(reminder: Reminder? = nil, initialFolder: ReminderFolder? = nil, initialDueDate: Date? = nil) {
@@ -45,6 +47,8 @@ struct ReminderEditor: View {
         _repeatUnit = State(initialValue: ReminderRepeatUnit(rawValue: reminder?.repeatUnit ?? "") ?? .days)
         _repeatInterval = State(initialValue: reminder?.repeatInterval ?? 1)
         let today = Calendar.current.startOfDay(for: .now)
+        _hasRepeatStartDate = State(initialValue: savedMode != .regularly || reminder?.repeatStartDate != nil)
+        _repeatStartDate = State(initialValue: reminder?.repeatStartDate ?? today)
         _hasRepeatEndDate = State(initialValue: reminder?.repeatEndDate != nil)
         _repeatEndDate = State(initialValue: reminder?.repeatEndDate ?? max(selectedDueDate ?? today, today))
     }
@@ -75,7 +79,7 @@ struct ReminderEditor: View {
             hasDueTime = enabled
             expandedPicker = enabled ? .time : nil
             if enabled {
-                enableDateIfNeeded()
+                if !repeats { enableDateIfNeeded() }
             } else {
                 usesAlarm = false
             }
@@ -88,7 +92,7 @@ struct ReminderEditor: View {
             usesAlarm = enabled
             expandedPicker = enabled ? .alarm : nil
             guard enabled else { return }
-            enableDateIfNeeded()
+            if !repeats { enableDateIfNeeded() }
             if !hasDueTime {
                 dueDate = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: dueDate) ?? dueDate
                 hasDueTime = true
@@ -97,12 +101,31 @@ struct ReminderEditor: View {
     }
 
     private var selectedDueDate: Date? {
+        if usesRegularSchedule {
+            if reminder?.generatedOccurrenceID != nil, let currentDate = reminder?.dueDate {
+                return dateWithSelectedTime(on: max(calendar.startOfDay(for: currentDate), calendar.startOfDay(for: regularRepeatAnchor)))
+            }
+            return regularRepeatAnchor
+        }
+        if repeats {
+            if let currentDate = reminder?.dueDate, reminder?.repeatMode == ReminderRepeatMode.afterCompletion.rawValue {
+                return dateWithSelectedTime(on: currentDate)
+            }
+            return hasDueTime ? dateWithSelectedTime(on: .now) : nil
+        }
         guard hasDueDate else { return nil }
         return hasDueTime ? dueDate : calendar.startOfDay(for: dueDate)
     }
 
     private var regularRepeatAnchor: Date {
-        selectedDueDate ?? calendar.startOfDay(for: .now)
+        dateWithSelectedTime(on: hasRepeatStartDate ? repeatStartDate : .now)
+    }
+
+    private func dateWithSelectedTime(on date: Date) -> Date {
+        let day = calendar.startOfDay(for: date)
+        guard hasDueTime else { return day }
+        let time = calendar.dateComponents([.hour, .minute], from: dueDate)
+        return calendar.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: 0, of: day) ?? day
     }
 
     private var invalidRepeatDates: Bool {
@@ -132,54 +155,29 @@ struct ReminderEditor: View {
                         Text("Give your reminder a title and choose where to keep it.")
                     }
 
-                    Section {
-                        duePickerRow(
-                            "Date", systemImage: "calendar", isOn: dateToggle,
-                            value: dateSummary(dueDate),
-                            picker: .date
-                        )
-                        if hasDueDate && expandedPicker == .date {
-                            inlineDatePicker("Due Date", selection: $dueDate, from: today)
-                        }
-                        duePickerRow(
-                            "Time", systemImage: "clock", isOn: timeToggle,
-                            value: dueDate.formatted(date: .omitted, time: .shortened), picker: .time
-                        )
-                        if hasDueDate && hasDueTime && expandedPicker == .time {
-                            DatePicker("Due Time", selection: $dueDate, displayedComponents: .hourAndMinute)
-                                .datePickerStyle(.wheel)
-                                .labelsHidden()
-                        }
-                        if #available(iOS 26.0, *) {
+                    if !repeats {
+                        Section {
                             duePickerRow(
-                                "Alarm", systemImage: "alarm", isOn: alarmToggle,
-                                value: snoozeMinutes == Reminder.snoozeOff
-                                    ? String(localized: "Snooze · Off")
-                                    : String(localized: "Snooze · \(snoozeMinutes) min"),
-                                picker: .alarm
+                                "Date", systemImage: "calendar", isOn: dateToggle,
+                                value: dateSummary(dueDate),
+                                picker: .date
                             )
-                            if usesAlarm && expandedPicker == .alarm {
-                                Picker("Snooze Duration", selection: $snoozeMinutes) {
-                                    Text("Off").tag(Reminder.snoozeOff)
-                                    ForEach([5, 10, 15, 20, 25, 30, 45, 60], id: \.self) { minutes in
-                                        Text("\(minutes) min").tag(minutes)
-                                    }
-                                }
-                                .pickerStyle(.wheel)
-                                .labelsHidden()
+                            if hasDueDate && expandedPicker == .date {
+                                inlineDatePicker("Due Date", selection: $dueDate, from: today)
                             }
-                        }
-                    } header: {
-                        if #available(iOS 26.0, *) {
-                            Text("Date and Alarm")
-                        } else {
-                            Text("Date")
-                        }
-                    } footer: {
-                        if #available(iOS 26.0, *) {
-                            Text("Choose a date and add a time for an alert. Turn on Alarm to have your iPhone ring at that time.")
-                        } else {
-                            Text("Set when the reminder is due.")
+                            timeAndAlarmRows
+                        } header: {
+                            if #available(iOS 26.0, *) {
+                                Text("Date and Alarm")
+                            } else {
+                                Text("Date")
+                            }
+                        } footer: {
+                            if #available(iOS 26.0, *) {
+                                Text("Choose a date and add a time for an alert. Turn on Alarm to have your iPhone ring at that time.")
+                            } else {
+                                Text("Set when the reminder is due.")
+                            }
                         }
                     }
 
@@ -193,6 +191,16 @@ struct ReminderEditor: View {
                             repeatIntervalRow
                                 .id(DuePicker.repeatInterval)
                             if usesRegularSchedule {
+                                duePickerRow(
+                                    "Start Date", systemImage: "calendar", isOn: startDateToggle,
+                                    value: dateSummary(repeatStartDate), picker: .startDate
+                                )
+                                if hasRepeatStartDate && expandedPicker == .startDate {
+                                    inlineDatePicker("Start Date", selection: $repeatStartDate, from: today)
+                                }
+                            }
+                            timeAndAlarmRows
+                            if usesRegularSchedule {
                                 let earliestEnd = max(today, calendar.startOfDay(for: regularRepeatAnchor))
                                 duePickerRow(
                                     "End Date", systemImage: "calendar", isOn: endDateToggle,
@@ -202,7 +210,7 @@ struct ReminderEditor: View {
                                     inlineDatePicker("End Date", selection: $repeatEndDate, from: earliestEnd)
                                 }
                                 if invalidRepeatDates {
-                                    Text("End date must be on or after the reminder’s first date.")
+                                    Text("End date must be on or after the start date.")
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                 }
@@ -225,11 +233,18 @@ struct ReminderEditor: View {
             .onChange(of: selectedFolder) { titleFocused = false }
             .onChange(of: dueDate) { titleFocused = false }
             .onChange(of: snoozeMinutes) { titleFocused = false }
-            .onChange(of: repeats) { titleFocused = false }
+            .onChange(of: repeats) {
+                titleFocused = false
+                if repeats && (expandedPicker == .date || expandedPicker == .time || expandedPicker == .alarm) {
+                    expandedPicker = nil
+                }
+            }
             .onChange(of: repeatMode) { titleFocused = false }
             .onChange(of: usesRegularSchedule) { _, isRegular in
                 if isRegular {
-                    enableDateIfNeeded()
+                    hasRepeatStartDate = true
+                } else if expandedPicker == .startDate || expandedPicker == .endDate {
+                    expandedPicker = nil
                 }
             }
             .onChange(of: hasRepeatEndDate) { titleFocused = false }
@@ -335,6 +350,46 @@ struct ReminderEditor: View {
         }
     }
 
+    @ViewBuilder
+    private var timeAndAlarmRows: some View {
+        duePickerRow(
+            "Time", systemImage: "clock", isOn: timeToggle,
+            value: dueDate.formatted(date: .omitted, time: .shortened), picker: .time
+        )
+        if hasDueTime && expandedPicker == .time {
+            DatePicker("Time", selection: $dueDate, displayedComponents: .hourAndMinute)
+                .datePickerStyle(.wheel)
+                .labelsHidden()
+        }
+        if #available(iOS 26.0, *) {
+            duePickerRow(
+                "Alarm", systemImage: "alarm", isOn: alarmToggle,
+                value: snoozeMinutes == Reminder.snoozeOff
+                    ? String(localized: "Snooze · Off")
+                    : String(localized: "Snooze · \(snoozeMinutes) min"),
+                picker: .alarm
+            )
+            if usesAlarm && expandedPicker == .alarm {
+                Picker("Snooze Duration", selection: $snoozeMinutes) {
+                    Text("Off").tag(Reminder.snoozeOff)
+                    ForEach([5, 10, 15, 20, 25, 30, 45, 60], id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+                .pickerStyle(.wheel)
+                .labelsHidden()
+            }
+        }
+    }
+
+    private var startDateToggle: Binding<Bool> {
+        Binding(get: { hasRepeatStartDate }, set: { enabled in
+            titleFocused = false
+            hasRepeatStartDate = enabled
+            expandedPicker = enabled ? .startDate : nil
+        })
+    }
+
     private var endDateToggle: Binding<Bool> {
         Binding(get: { hasRepeatEndDate }, set: { enabled in
             titleFocused = false
@@ -389,10 +444,12 @@ struct ReminderEditor: View {
         let mode = repeats ? repeatMode.rawValue : nil
         let unit = repeats ? repeatUnit.rawValue : nil
         let interval = repeats ? repeatInterval : nil
-        let dateOnly = hasDueDate && !hasDueTime ? true : nil
+        let dateOnly = (selectedDueDate != nil || repeats) && !hasDueTime ? true : nil
+        let startDate = usesRegularSchedule && hasRepeatStartDate ? calendar.startOfDay(for: repeatStartDate) : nil
         let endDate = usesRegularSchedule && hasRepeatEndDate ? calendar.startOfDay(for: repeatEndDate) : nil
         let repeatConfigurationChanged = reminder == nil || item.dueDate != selectedDueDate ||
-            item.repeatMode != mode || item.repeatUnit != unit || item.repeatInterval != interval
+            item.repeatMode != mode || item.repeatUnit != unit || item.repeatInterval != interval ||
+            item.repeatStartDate != startDate
         let occurrenceChanged = repeatConfigurationChanged || item.title != trimmedTitle ||
             item.isDateOnly != dateOnly || item.folder?.persistentModelID != selectedFolder?.persistentModelID ||
             item.repeatEndDate != endDate || item.alarmID != originalAlarmID ||
@@ -404,13 +461,16 @@ struct ReminderEditor: View {
             item.earlyCompletionUnlockAt = nil
             if usesRegularSchedule {
                 item.repeatAnchor = regularRepeatAnchor
-                item.repeatStartDate = calendar.startOfDay(for: regularRepeatAnchor)
+                item.repeatStartDate = startDate
             } else {
                 item.repeatAnchor = repeats ? (selectedDueDate ?? .now) : nil
                 item.repeatStartDate = nil
             }
         }
         item.title = trimmedTitle
+        if let availableAt = item.availableAt, availableAt > .now, let selectedDueDate {
+            item.availableAt = selectedDueDate
+        }
         item.dueDate = selectedDueDate
         item.isDateOnly = dateOnly
         item.folder = selectedFolder

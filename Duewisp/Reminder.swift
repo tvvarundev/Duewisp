@@ -41,8 +41,12 @@ final class Reminder {
         self.dueDate = dueDate
     }
 
+    var completionUnlockAt: Date? {
+        [earlyCompletionUnlockAt, repeatStartDate].compactMap { $0 }.max()
+    }
+
     func complete(in modelContext: ModelContext, at completedAt: Date = .now) {
-        guard deletedAt == nil, !isCompleted, (earlyCompletionUnlockAt ?? .distantPast) <= completedAt else { return }
+        guard deletedAt == nil, !isCompleted, (completionUnlockAt ?? .distantPast) <= completedAt else { return }
         isCompleted = true
         guard hasScheduledNextOccurrence != true,
               let mode = ReminderRepeatMode(rawValue: repeatMode ?? ""),

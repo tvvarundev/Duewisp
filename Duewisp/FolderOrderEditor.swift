@@ -1,21 +1,22 @@
-import SwiftData
 import SwiftUI
 
-struct FolderOrderEditor: View {
+struct FolderOrderEditor<Folder: Hashable>: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-    @State private var folders: [ReminderFolder]
-    @State private var showingSaveError = false
+    @State private var folders: [Folder]
+    let name: (Folder) -> String
+    let saveOrder: ([Folder]) -> Void
 
-    init(folders: [ReminderFolder]) {
+    init(folders: [Folder], name: @escaping (Folder) -> String, saveOrder: @escaping ([Folder]) -> Void) {
+        self.name = name
+        self.saveOrder = saveOrder
         _folders = State(initialValue: folders)
     }
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(folders) { folder in
-                    Text(folder.name)
+                ForEach(folders, id: \.self) { folder in
+                    Text(name(folder))
                 }
                 .onMove { offsets, destination in
                     folders.move(fromOffsets: offsets, toOffset: destination)
@@ -29,25 +30,12 @@ struct FolderOrderEditor: View {
                     Button("Cancel", role: .cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", action: save)
+                    Button("Done") {
+                        saveOrder(folders)
+                        dismiss()
+                    }
                 }
             }
-            .alert("Couldn’t Save Folder Order", isPresented: $showingSaveError) {
-                Button("OK", role: .cancel) {}
-            }
-        }
-    }
-
-    private func save() {
-        for (index, folder) in folders.enumerated() {
-            folder.sortOrder = index
-        }
-        do {
-            try modelContext.save()
-            dismiss()
-        } catch {
-            modelContext.rollback()
-            showingSaveError = true
         }
     }
 }
