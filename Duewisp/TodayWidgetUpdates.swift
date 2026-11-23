@@ -10,7 +10,7 @@ enum TodayWidgetUpdates {
 
         do {
             let query = FetchDescriptor<Reminder>(
-                predicate: #Predicate { !$0.isCompleted },
+                predicate: #Predicate { !$0.isCompleted && $0.deletedAt == nil },
                 sortBy: [SortDescriptor(\Reminder.dueDate), SortDescriptor(\Reminder.createdAt)]
             )
             let items = try context.fetch(query).compactMap { reminder -> TodayWidgetSnapshot.Item? in

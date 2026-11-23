@@ -8,7 +8,9 @@ enum ReminderAlarms {
     private static let logger = Logger(subsystem: "com.duewisp.app", category: "Alarms")
     private static let stopIntentIDsKey = "alarmIDsWithTimedSnooze"
 
-    static func sync(_ alerts: [ReminderNotifications.Alert]) async -> Set<UUID> {
+    static func sync(
+        _ alerts: [ReminderNotifications.Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm]
+    ) async -> Set<UUID> {
         let manager = AlarmManager.shared
         var desiredMinutes: [UUID: Int] = [:]
         for alert in alerts {
@@ -20,7 +22,9 @@ enum ReminderAlarms {
 
         do {
             let upcoming = alerts.filter { $0.alarmID != nil && $0.date > .now }
-            if manager.authorizationState == .notDetermined && !upcoming.isEmpty {
+            let upcomingGroupAlarms = groupedAlarms.filter { !$0.weekdays.isEmpty || $0.date > .now }
+            let groupedIDs = Set(groupedAlarms.map(\.id))
+            if manager.authorizationState == .notDetermined && (!upcoming.isEmpty || !upcomingGroupAlarms.isEmpty) {
                 _ = try await manager.requestAuthorization()
             }
             guard !Task.isCancelled, manager.authorizationState == .authorized else { return [] }
@@ -28,6 +32,10 @@ enum ReminderAlarms {
             let previousIDs = Set(UserDefaults.standard.stringArray(forKey: stopIntentIDsKey) ?? [])
             var stopIntentIDs: Set<String> = []
             for alarm in try manager.alarms {
+                if groupedIDs.contains(alarm.id) {
+                    scheduledIDs.insert(alarm.id)
+                    continue
+                }
                 let hasStopIntent = previousIDs.contains(alarm.id.uuidString)
                 if let minutes = desiredMinutes[alarm.id],
                    alarm.state != .scheduled || (hasStopIntent && alarm.countdownDuration == countdown(for: minutes)) {
@@ -57,6 +65,16 @@ enum ReminderAlarms {
                     logger.error("Could not schedule reminder alarm: \(error.localizedDescription, privacy: .private)")
                 }
             }
+            for alarm in upcomingGroupAlarms {
+                guard !Task.isCancelled else { break }
+                guard !scheduledIDs.contains(alarm.id), !alarm.weekdays.isEmpty || alarm.date > .now else { continue }
+                do {
+                    try await scheduleGroupedAlarm(alarm)
+                    scheduledIDs.insert(alarm.id)
+                } catch {
+                    logger.error("Could not schedule grouped alarm: \(error.localizedDescription, privacy: .private)")
+                }
+            }
             if stopIntentIDs != previousIDs {
                 UserDefaults.standard.set(stopIntentIDs.sorted(), forKey: stopIntentIDsKey)
             }
@@ -64,6 +82,34 @@ enum ReminderAlarms {
             logger.error("Could not reconcile reminder alarms: \(error.localizedDescription, privacy: .private)")
         }
         return scheduledIDs
+    }
+
+    private static func scheduleGroupedAlarm(_ alarm: AlarmGroup.ScheduledAlarm) async throws {
+        let title = LocalizedStringResource(stringLiteral: alarm.title)
+        let alert: AlarmPresentation.Alert
+        if #available(iOS 26.1, *) {
+            alert = .init(title: title)
+        } else {
+            alert = .init(title: title, stopButton: AlarmButton(
+                text: "Stop", textColor: .white, systemImageName: "stop.fill"
+            ))
+        }
+        let attributes = AlarmAttributes<ReminderAlarmMetadata>(
+            presentation: AlarmPresentation(alert: alert),
+            tintColor: .accentColor
+        )
+        let schedule: Alarm.Schedule
+        if alarm.weekdays.isEmpty {
+            schedule = .fixed(alarm.date)
+        } else {
+            let days: [Locale.Weekday] = [.sunday, .monday, .tuesday, .wednesday, .thursday, .friday, .saturday]
+            let time = Calendar.current.dateComponents([.hour, .minute], from: alarm.date)
+            schedule = .relative(.init(time: .init(hour: time.hour!, minute: time.minute!),
+                                       repeats: .weekly(alarm.weekdays.map { days[$0 - 1] })))
+        }
+        _ = try await AlarmManager.shared.schedule(
+            id: alarm.id, configuration: .alarm(schedule: schedule, attributes: attributes)
+        )
     }
 
     private static func schedule(id: UUID, title: String, date: Date, snoozeMinutes: Int) async throws {

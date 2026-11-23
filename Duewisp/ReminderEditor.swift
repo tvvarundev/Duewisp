@@ -326,69 +326,12 @@ struct ReminderEditor: View {
     private func duePickerRow(
         _ title: LocalizedStringKey, systemImage: String, isOn: Binding<Bool>, value: String, picker: DuePicker
     ) -> some View {
-        let isEnabled = isOn.wrappedValue
         let isExpanded = expandedPicker == picker
-        return HStack {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                    if isEnabled {
-                        Text(value)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-            } icon: {
-                Image(systemName: systemImage).foregroundStyle(.secondary)
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-
-            Spacer(minLength: 8)
-
-            Toggle(title, isOn: isOn.animation(reduceMotion ? nil : .smooth))
-                .labelsHidden()
-        }
-        .frame(minHeight: 44)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background {
-            Button {
-                titleFocused = false
-                withAnimation(reduceMotion ? nil : .smooth(duration: PickerRowPressStyle.releaseDuration)) {
-                    if isEnabled {
-                        expandedPicker = isExpanded ? nil : picker
-                    } else {
-                        isOn.wrappedValue = true
-                    }
-                }
-            } label: {
-                Color.clear.contentShape(Rectangle())
-            }
-            .buttonStyle(PickerRowPressStyle(reduceMotion: reduceMotion))
-            .accessibilityLabel(Text(title))
-            .accessibilityValue(Text(isEnabled ? value : ""))
-            .accessibilityHint(isExpanded ? "Collapses picker" : "Expands picker")
-            .accessibilitySortPriority(1)
-        }
-        .listRowInsets(EdgeInsets())
-    }
-
-    private struct PickerRowPressStyle: ButtonStyle {
-        static let releaseDuration = 0.4
-        private static let releaseDelay = 0.1
-        let reduceMotion: Bool
-
-        func makeBody(configuration: Configuration) -> some View {
-            configuration.label.background {
-                Color(uiColor: .systemFill)
-                    .opacity(configuration.isPressed ? 1 : 0)
-                    .animation(
-                        configuration.isPressed || reduceMotion ? nil :
-                            .easeInOut(duration: Self.releaseDuration - Self.releaseDelay).delay(Self.releaseDelay),
-                        value: configuration.isPressed
-                    )
-            }
+        return TogglePickerRow(
+            title: title, systemImage: systemImage, isOn: isOn, value: value, isExpanded: isExpanded,
+            onPress: { titleFocused = false }
+        ) {
+            expandedPicker = isExpanded ? nil : picker
         }
     }
 

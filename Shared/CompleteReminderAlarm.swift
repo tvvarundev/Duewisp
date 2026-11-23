@@ -35,7 +35,7 @@ struct CompleteReminderAlarm: LiveActivityIntent {
         #if !ALARM_ACTIVITY_EXTENSION
         guard !putOnHold, !keepSnoozing, let alarmID = UUID(uuidString: alarmIdentifier) else { return .result() }
         let context = try DuewispApp.storage.get().mainContext
-        let activeReminders = FetchDescriptor<Reminder>(predicate: #Predicate { !$0.isCompleted })
+        let activeReminders = FetchDescriptor<Reminder>(predicate: #Predicate { !$0.isCompleted && $0.deletedAt == nil })
         let reminders = try context.fetch(activeReminders)
         guard let reminder = reminders.first(where: { $0.alarmID == alarmID }) else { return .result() }
         if endSnooze {
@@ -51,7 +51,11 @@ struct CompleteReminderAlarm: LiveActivityIntent {
             throw error
         }
         let updatedReminders = try context.fetch(activeReminders)
-        await ReminderNotifications.sync(updatedReminders.compactMap(ReminderNotifications.Alert.init))
+        let groupedAlarms = try context.fetch(FetchDescriptor<AlarmGroup>()).flatMap(\.schedule)
+        await ReminderNotifications.sync(
+            updatedReminders.compactMap(ReminderNotifications.Alert.init),
+            groupedAlarms: groupedAlarms
+        )
         #endif
         return .result()
     }

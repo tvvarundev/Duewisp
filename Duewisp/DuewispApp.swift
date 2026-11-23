@@ -7,7 +7,10 @@ struct DuewispApp: App {
     @UIApplicationDelegateAdaptor(NotificationDelegate.self) private var notificationDelegate
     static let storage = Result {
         // The widget reads a snapshot. Keep existing reminders in the app's original store.
-        try ModelContainer(for: Reminder.self, ReminderFolder.self, configurations: ModelConfiguration(groupContainer: .none))
+        try ModelContainer(
+            for: Reminder.self, ReminderFolder.self, AlarmGroup.self, GroupedAlarm.self,
+            configurations: ModelConfiguration(groupContainer: .none)
+        )
     }
 
     var body: some Scene {

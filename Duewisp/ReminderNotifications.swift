@@ -26,7 +26,7 @@ enum ReminderNotifications {
     @MainActor private static var pendingSync: Task<Void, Never>?
 
     @MainActor
-    static func sync(_ alerts: [Alert]) async {
+    static func sync(_ alerts: [Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm]) async {
         let previous = pendingSync
         previous?.cancel()
         let task = Task {
@@ -35,7 +35,7 @@ enum ReminderNotifications {
 
             let scheduledAlarms: Set<UUID>
             if #available(iOS 26.0, *) {
-                scheduledAlarms = await ReminderAlarms.sync(alerts)
+                scheduledAlarms = await ReminderAlarms.sync(alerts, groupedAlarms: groupedAlarms)
             } else {
                 scheduledAlarms = []
             }

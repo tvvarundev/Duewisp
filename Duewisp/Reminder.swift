@@ -9,6 +9,7 @@ final class Reminder {
     var title: String
     var dueDate: Date?
     var isDateOnly: Bool?
+    var deletedAt: Date?
     var isCompleted = false
     var calendarOccurrenceID: String?
     var createdAt = Date.now
@@ -41,7 +42,7 @@ final class Reminder {
     }
 
     func complete(in modelContext: ModelContext, at completedAt: Date = .now) {
-        guard !isCompleted, (earlyCompletionUnlockAt ?? .distantPast) <= completedAt else { return }
+        guard deletedAt == nil, !isCompleted, (earlyCompletionUnlockAt ?? .distantPast) <= completedAt else { return }
         isCompleted = true
         guard hasScheduledNextOccurrence != true,
               let mode = ReminderRepeatMode(rawValue: repeatMode ?? ""),
@@ -78,23 +79,6 @@ final class Reminder {
         hasScheduledNextOccurrence = true
     }
 
-    func reopenAsOneTime() {
-        isCompleted = false
-        availableAt = nil
-        earlyCompletionUnlockAt = nil
-        repeatMode = nil
-        repeatUnit = nil
-        repeatInterval = nil
-        repeatAnchor = nil
-        repeatStartDate = nil
-        repeatEndDate = nil
-        hasScheduledNextOccurrence = nil
-        scheduledOccurrenceID = nil
-        if generatedOccurrenceID != nil {
-            generatedOccurrenceWasEdited = true
-        }
-    }
-
     static func laterOpenOccurrences(in reminders: [Reminder]) -> Set<PersistentIdentifier> {
         let successors = Dictionary(grouping: reminders, by: \.generatedOccurrenceID)
         var blocked: Set<PersistentIdentifier> = []
@@ -111,23 +95,28 @@ final class Reminder {
         return blocked
     }
 
-    func undoCompletion(in modelContext: ModelContext, snoozedAlarmIDs: Set<UUID>) throws -> Bool {
-        guard isCompleted else { return true }
-        if hasScheduledNextOccurrence == true {
-            guard let scheduledOccurrenceID else { return false }
+    func reopen(in modelContext: ModelContext, snoozedAlarmIDs: Set<UUID>) throws {
+        guard isCompleted else { return }
+        if hasScheduledNextOccurrence == true, let scheduledOccurrenceID {
             let candidates = FetchDescriptor<Reminder>(predicate: #Predicate {
-                $0.generatedOccurrenceID == scheduledOccurrenceID
+                $0.generatedOccurrenceID == scheduledOccurrenceID && $0.deletedAt == nil
             })
-            guard let next = try modelContext.fetch(candidates).first,
-                  !next.isCompleted, next.generatedOccurrenceWasEdited != true,
-                  next.alarmStopped != true,
-                  next.alarmID.map({ !snoozedAlarmIDs.contains($0) }) ?? true else { return false }
-            modelContext.delete(next)
-            hasScheduledNextOccurrence = nil
-            self.scheduledOccurrenceID = nil
+            // Replace only an untouched successor. Later history keeps its original series links.
+            if let next = try modelContext.fetch(candidates).first,
+               !next.isCompleted, next.hasScheduledNextOccurrence != true,
+               next.generatedOccurrenceWasEdited != true, next.alarmStopped != true,
+               next.alarmID.map({ !snoozedAlarmIDs.contains($0) }) ?? true {
+                modelContext.delete(next)
+                hasScheduledNextOccurrence = nil
+                self.scheduledOccurrenceID = nil
+            }
         }
         isCompleted = false
-        return true
+        availableAt = nil
+        earlyCompletionUnlockAt = nil
+        if generatedOccurrenceID != nil {
+            generatedOccurrenceWasEdited = true
+        }
     }
 }
 

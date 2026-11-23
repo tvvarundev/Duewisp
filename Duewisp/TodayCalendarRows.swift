@@ -86,6 +86,7 @@ struct CalendarSettings: View {
 
 struct TodayCalendarRows: View {
     let items: [CalendarItem]
+    let hidesFirstSeparator: Bool
     let markingIDs: Set<String>
     let isSelectingReminders: Bool
     let markComplete: (CalendarItem) -> Void
@@ -113,6 +114,7 @@ struct TodayCalendarRows: View {
                             .font(.title2)
                             .foregroundStyle(isMarking ? Color.accentColor : Color.secondary.opacity(0.5))
                             .contentTransition(.symbolEffect(.replace))
+                            .frame(width: 30)
                             .frame(minWidth: 44, minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
                     }
@@ -131,6 +133,7 @@ struct TodayCalendarRows: View {
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
+            .listRowSeparator(hidesFirstSeparator && item.id == items.first?.id ? .hidden : .automatic, edges: .top)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         }
     }

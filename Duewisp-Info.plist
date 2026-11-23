@@ -5,7 +5,7 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Duewisp uses alarms to alert you when a reminder is due.</string>
+	<string>Duewisp uses alarms to ring for reminders and alarm groups at the times you choose.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Duewisp reads your calendars to show today’s events and birthdays in Today.</string>
 </dict>
