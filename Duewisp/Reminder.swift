@@ -11,6 +11,7 @@ final class Reminder {
     var isDateOnly: Bool?
     var deletedAt: Date?
     var isCompleted = false
+    var completedAt: Date?
     var calendarOccurrenceID: String?
     var createdAt = Date.now
     var folder: ReminderFolder?
@@ -45,9 +46,14 @@ final class Reminder {
         [earlyCompletionUnlockAt, repeatStartDate].compactMap { $0 }.max()
     }
 
+    static func completedMoreRecently(_ first: Reminder, _ second: Reminder) -> Bool {
+        (first.completedAt ?? .distantPast) > (second.completedAt ?? .distantPast)
+    }
+
     func complete(in modelContext: ModelContext, at completedAt: Date = .now) {
         guard deletedAt == nil, !isCompleted, (completionUnlockAt ?? .distantPast) <= completedAt else { return }
         isCompleted = true
+        self.completedAt = completedAt
         guard hasScheduledNextOccurrence != true,
               let mode = ReminderRepeatMode(rawValue: repeatMode ?? ""),
               let unit = ReminderRepeatUnit(rawValue: repeatUnit ?? ""),
@@ -116,6 +122,7 @@ final class Reminder {
             }
         }
         isCompleted = false
+        completedAt = nil
         availableAt = nil
         earlyCompletionUnlockAt = nil
         if generatedOccurrenceID != nil {

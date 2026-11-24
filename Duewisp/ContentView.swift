@@ -450,7 +450,7 @@ struct ContentView: View {
         }
         .sorted { $0.due < $1.due }
         .map(\.reminder)
-        let completed = visible.filter(\.isCompleted)
+        let completed = visible.filter(\.isCompleted).sorted(by: Reminder.completedMoreRecently)
         let todayIDs = Set(today.map(\.persistentModelID))
         let remindersByFolder = Dictionary(grouping: visible) {
             $0.folder?.persistentModelID
@@ -774,6 +774,7 @@ struct ContentView: View {
             reminder.isCompleted && (reminder.repeatMode == ReminderRepeatMode.regularly.rawValue ||
                                      reminder.repeatMode == ReminderRepeatMode.afterCompletion.rawValue)
         }
+        .sorted(by: Reminder.completedMoreRecently)
 
         Section {
             if grouped {
@@ -986,7 +987,7 @@ struct ContentView: View {
             }
             .tag(row.id)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-            .swipeActions {
+            .swipeActions(allowsFullSwipe: false) {
                 if !isSelectingReminders {
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         withAnimation {
@@ -1008,9 +1009,9 @@ struct ContentView: View {
             withAnimation(.smooth(duration: 0.3)) {
                 let completion = Reminder(title: item.title, dueDate: item.date)
                 completion.isDateOnly = item.kind != .timed
-                completion.isCompleted = true
                 completion.calendarOccurrenceID = item.id
                 modelContext.insert(completion)
+                completion.complete(in: modelContext)
                 saveChanges()
             }
         }
