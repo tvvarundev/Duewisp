@@ -330,6 +330,7 @@ struct ContentView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .modifier(ReminderListBounds())
         .navigationTitle("Search")
         .alert("Couldn’t Save Changes", isPresented: $showingSaveError) {
             Button("OK", role: .cancel) {}
@@ -349,13 +350,9 @@ struct ContentView: View {
             .navigationTitle(isSelectingReminders ? selectionTitle : name(for: destination))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { reminderToolbar(for: destination) }
-            .toolbar(isSelectingReminders ? .visible : .automatic, for: .bottomBar)
-            .toolbar(isSelectingReminders ? .hidden : .automatic, for: .tabBar)
         }
         .navigationTitle(isSelectingReminders ? selectionTitle : String(localized: "Reminders"))
         .navigationBarTitleDisplayMode(.large)
-        .toolbar(isSelectingReminders ? .hidden : .automatic, for: .tabBar)
-        .toolbar(isSelectingReminders ? .visible : .automatic, for: .bottomBar)
         .toolbar {
             reminderToolbar(for: nil)
             if !isSelectingReminders {
@@ -552,7 +549,7 @@ struct ContentView: View {
                     case .completed:
                         if (homeView == .grouped || expanded.contains(.completed)) && !completed.isEmpty {
                             Section {
-                                folderHeader(String(localized: "Completed"), status: "\(completed.count) completed", destination: .completed, hidesDivider: isSelected(completed.first, in: .completed))
+                                folderHeader(String(localized: "Completed"), status: "\(completed.count) completed", destination: .completed)
                                 reminderRows(completed, in: .completed)
                             }
                         } else {
@@ -570,12 +567,10 @@ struct ContentView: View {
         }
         .listStyle(.insetGrouped)
         .listSectionSpacing(.compact)
+        .modifier(ReminderListBounds())
         .contentMargins(.top, 0, for: .scrollContent)
-        // Reserve the same space under either the tab bar or the selection toolbar.
-        .ignoresSafeArea(.container, edges: .bottom)
-        .contentMargins(.bottom, 88, for: .scrollContent)
         .environment(\.editMode, isVisibleList ? $reminderEditMode : .constant(.inactive))
-        .animation(.default, value: isVisibleList && reminderEditMode.isEditing)
+        .animation(.default, value: canSelectReminders && reminderEditMode.isEditing)
         .alert("Delete selected reminders?", isPresented: Binding(
             get: { openedFolder == destination && pendingDeletionIDs != nil },
             set: { if !$0 && openedFolder == destination { pendingDeletionIDs = nil } }
@@ -615,22 +610,13 @@ struct ContentView: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderedProminent)
             }
-            ToolbarItemGroup(placement: .bottomBar) {
+            ToolbarItemGroup(placement: .topBarLeading) {
                 Button("Delete Selected Reminders", systemImage: "trash") {
                     let ids = Set(selectedReminderRows.map(\.reminder))
                     if !ids.isEmpty { pendingDeletionIDs = ids }
                 }
                 .labelStyle(.iconOnly)
                 .disabled(selectedReminderRows.isEmpty)
-            }
-            if #available(iOS 26.0, *) {
-                ToolbarSpacer(.flexible, placement: .bottomBar)
-            } else {
-                ToolbarItem(placement: .bottomBar) {
-                    Spacer()
-                }
-            }
-            ToolbarItem(placement: .bottomBar) {
                 Menu("Selection Options", systemImage: "ellipsis") {
                     Button("Mark as Completed", systemImage: "largecircle.fill.circle", action: completeSelectedReminders)
                         .disabled(completableSelection(at: .now).isEmpty)
@@ -735,7 +721,7 @@ struct ContentView: View {
         Section {
             let name = String(localized: "Today")
             if grouped {
-                folderHeader(name, status: today.isEmpty ? "All done" : "\(today.count) remaining", destination: .today, hidesDivider: isSelected(today.first, in: .today))
+                folderHeader(name, status: today.isEmpty ? "All done" : "\(today.count) remaining", destination: .today)
             }
             let completedIDs = Set(reminders.compactMap(\.calendarOccurrenceID))
             let calendarItems = todayCalendarItems.filter { item in
@@ -746,11 +732,10 @@ struct ContentView: View {
                 case .timed: return showsTimedEvents
                 }
             }
-            reminderRows(today, in: .today, hasFollowingRow: grouped || !calendarItems.isEmpty)
+            reminderRows(today, in: .today)
             if !calendarItems.isEmpty {
                 TodayCalendarRows(
                     items: calendarItems,
-                    hidesFirstSeparator: !today.isEmpty,
                     markingIDs: calendarItemsBeingCompleted,
                     isSelectingReminders: isSelectingReminders,
                     markComplete: markCalendarItemComplete
@@ -760,7 +745,6 @@ struct ContentView: View {
                 addReminderRow(in: name) {
                     newReminder = NewReminder(folder: nil, dueDate: .now)
                 }
-                .listRowSeparator(!today.isEmpty && calendarItems.isEmpty ? .hidden : .automatic, edges: .top)
             }
         }
     }
@@ -768,8 +752,10 @@ struct ContentView: View {
     @ViewBuilder
     private func folderActions(for folder: ReminderFolder) -> some View {
         Button("Delete Folder", systemImage: "trash", role: .destructive) {
-            modelContext.delete(folder)
-            saveChanges()
+            withAnimation {
+                modelContext.delete(folder)
+                saveChanges()
+            }
         }
         Button("Rename Folder", systemImage: "pencil") {
             folderToRename = folder
@@ -794,8 +780,7 @@ struct ContentView: View {
                 folderHeader(
                     name,
                     status: reminders.isEmpty ? "No reminders" : remaining.isEmpty ? "All done" : "\(remaining.count) remaining",
-                    destination: folder.map { .folder($0.persistentModelID) } ?? .inbox,
-                    hidesDivider: isSelected(remaining.first, in: .folder(folder?.persistentModelID))
+                    destination: folder.map { .folder($0.persistentModelID) } ?? .inbox
                 )
                     .swipeActions(allowsFullSwipe: false) {
                         if let folder {
@@ -803,19 +788,17 @@ struct ContentView: View {
                         }
                     }
             }
-            reminderRows(remaining, in: .folder(folder?.persistentModelID), todayIDs: todayIDs, hasFollowingRow: grouped)
+            reminderRows(remaining, in: .folder(folder?.persistentModelID), todayIDs: todayIDs)
             if grouped {
                 addReminderRow(in: name) {
                     newReminder = NewReminder(folder: folder)
                 }
-                .listRowSeparator(remaining.isEmpty ? .automatic : .hidden, edges: .top)
             }
             if grouped && folder != nil && !completedRepeats.isEmpty {
                 Text("Completed Repeats")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
-                    .listRowSeparator(isSelected(completedRepeats.first, in: .folderHistory) ? .hidden : .automatic, edges: .bottom)
                 reminderRows(completedRepeats, in: .folderHistory)
             }
         }
@@ -845,7 +828,7 @@ struct ContentView: View {
     }
 
     private func folderHeader(
-        _ name: String, status: LocalizedStringKey, destination: FolderDestination, hidesDivider: Bool
+        _ name: String, status: LocalizedStringKey, destination: FolderDestination
     ) -> some View {
         folderNavigationRow(to: destination) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -862,15 +845,7 @@ struct ContentView: View {
                     .background(.primary.opacity(0.045), in: Capsule())
             }
         }
-        .listRowSeparator(.hidden, edges: .bottom)
-        .listRowBackground(
-            Color(uiColor: .secondarySystemGroupedBackground)
-                .overlay(alignment: .bottom) {
-                    if !hidesDivider {
-                        Divider().padding(.horizontal, 20)
-                    }
-                }
-        )
+
     }
 
     private enum ReminderListSection: Hashable {
@@ -883,18 +858,12 @@ struct ContentView: View {
         let section: ReminderListSection
     }
 
-    private func isSelected(_ reminder: Reminder?, in section: ReminderListSection) -> Bool {
-        guard let reminder else { return false }
-        return selectedReminderRows.contains(ReminderRowID(reminder: reminder.persistentModelID, section: section))
-    }
-
     private func reminderRows(
-        _ reminders: [Reminder], in section: ReminderListSection, todayIDs: Set<PersistentIdentifier> = [],
-        hasFollowingRow: Bool = false
+        _ reminders: [Reminder], in section: ReminderListSection, todayIDs: Set<PersistentIdentifier> = []
     ) -> some View {
         let blockedOccurrences = section == .upcoming ? Reminder.laterOpenOccurrences(in: self.reminders) : []
         let today = Calendar.current.startOfDay(for: .now)
-        let rows = reminders.enumerated().map { index, reminder in
+        let rows = reminders.map { reminder in
             let badge: Text?
             if reminder.calendarOccurrenceID != nil {
                 badge = Text("From Calendar")
@@ -912,9 +881,6 @@ struct ContentView: View {
             }
             return (
                 id: ReminderRowID(reminder: reminder.persistentModelID, section: section),
-                showsBottomDivider: index + 1 < reminders.count
-                    ? isSelected(reminder, in: section) == isSelected(reminders[index + 1], in: section)
-                    : hasFollowingRow && !isSelected(reminder, in: section),
                 reminder: reminder,
                 isCompleted: reminder.isCompleted,
                 isOverdue: !reminder.isCompleted && reminder.dueDate.map { $0 < today } == true,
@@ -964,7 +930,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
 
-            HStack(spacing: 0) {
+            ReminderSelectionRow(isSelecting: isSelectingReminders) { controlWidth in
                 if !isSelectingReminders {
                     Button {
                         guard !isBlockedOccurrence else { return }
@@ -990,24 +956,27 @@ struct ContentView: View {
                             .font(.title2)
                             .foregroundStyle(isMarkingComplete ? Color.accentColor : row.isCompleted ? .secondary : .secondary.opacity(0.5))
                             .contentTransition(.symbolEffect(.replace))
-                            .frame(width: 30)
-                            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                            // Match the native edit accessory's center within the row inset.
+                            .frame(width: 24)
+                            .offset(y: -0.5)
+                            .frame(width: controlWidth, alignment: .leading)
+                            .frame(minHeight: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel(isBlockedOccurrence ? "Completion unavailable" : isMarkingComplete ? "Completing reminder" : row.isCompleted ? "Mark incomplete" : "Mark complete")
                     .accessibilityHint(reminder.title)
-                    .transition(.asymmetric(insertion: .opacity, removal: .identity))
                 }
 
+            } label: {
                 if reminder.calendarOccurrenceID != nil {
-                    label.opacity(0).contentShape(Rectangle())
+                    label
                 } else {
                     Button {
                         guard !isSelectingReminders else { return }
                         reminderToEdit = reminder
                     } label: {
-                        label.opacity(0).contentShape(Rectangle())
+                        label
                     }
                     .buttonStyle(.plain)
                     .allowsHitTesting(!isSelectingReminders)
@@ -1015,18 +984,15 @@ struct ContentView: View {
                     .accessibilityHint(isSelectingReminders ? "" : "Edit reminder")
                 }
             }
-            .modifier(ReminderRowLayout(
-                label: label,
-                isSelected: selectedReminderRows.contains(row.id),
-                showsBottomDivider: row.showsBottomDivider
-            ))
             .tag(row.id)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .swipeActions {
                 if !isSelectingReminders {
                     Button("Delete", systemImage: "trash", role: .destructive) {
-                        reminder.deletedAt = .now
-                        saveChanges()
+                        withAnimation {
+                            reminder.deletedAt = .now
+                            saveChanges()
+                        }
                     }
                 }
             }
@@ -1115,38 +1081,72 @@ struct ContentView: View {
     }
 }
 
-private struct ReminderRowLayout<RowLabel: View>: ViewModifier {
-    let label: RowLabel
-    let isSelected: Bool
-    let showsBottomDivider: Bool
-    @State private var labelHeight: CGFloat?
+private struct ReminderListBounds: ViewModifier {
+    @State private var bounds = CGRect.zero
 
     func body(content: Content) -> some View {
         content
-            .frame(height: labelHeight)
-            .listRowBackground(
-                ZStack(alignment: .leading) {
-                    Color(uiColor: .secondarySystemGroupedBackground)
-                    if isSelected { Color(uiColor: .systemFill) }
-                    label
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                            labelHeight = height
-                        }
-                        .padding(.leading, 60)
-                        .padding(.trailing, 16)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+            .environment(\.reminderListBounds, bounds)
+            .onGeometryChange(for: CGRect.self) { proxy in
+                let frame = proxy.frame(in: .global)
+                return CGRect(x: frame.minX, y: 0, width: frame.width, height: 0)
+            } action: { bounds = $0 }
+    }
+}
+
+private extension EnvironmentValues {
+    @Entry var reminderListBounds = CGRect.zero
+}
+
+private struct ReminderSelectionRow<Control: View, Label: View>: View {
+    let isSelecting: Bool
+    @ViewBuilder let control: (CGFloat) -> Control
+    @ViewBuilder let label: () -> Label
+    @Environment(\.layoutDirection) private var direction
+    @Environment(\.reminderListBounds) private var listBounds
+    @ScaledMetric(relativeTo: .title2) private var scaledControlWidth: CGFloat = 44
+    @State private var measurement: RowMeasurement?
+
+    private struct RowMeasurement: Equatable {
+        let listWidth: CGFloat
+        let fullRowWidth: CGFloat
+    }
+
+    var body: some View {
+        let controlWidth = max(44, scaledControlWidth)
+        let labelWidth = measurement.map { max(0, $0.fullRowWidth - controlWidth) }
+
+        label()
+            .frame(width: labelWidth, alignment: .leading)
+            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
+            .padding(.leading, labelWidth == nil && !isSelecting ? controlWidth : 0)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
+            .overlay(alignment: labelWidth == nil ? .leading : .trailing) {
+                ZStack {
+                    control(controlWidth)
                 }
-                .overlay(alignment: .bottom) {
-                    if showsBottomDivider {
-                        Divider()
-                            .padding(.leading, 60)
-                            .padding(.trailing, 16)
-                            .accessibilityHidden(true)
-                    }
-                }
-            )
-            .listRowSeparator(.hidden)
+                .frame(width: controlWidth)
+                .animation(.default, value: isSelecting)
+                .padding(.trailing, labelWidth ?? 0)
+            }
+            .transaction(value: isSelecting) { $0.animation = nil }
+        .onGeometryChange(for: RowMeasurement?.self) { proxy in
+            guard listBounds.width > 0 else { return nil }
+            let row = proxy.frame(in: .global)
+            // The list moves the leading edge for the selection circle. Mirror the trailing inset
+            // to recover the full row width independently of that accessory.
+            let halfWidth = direction == .leftToRight ? row.maxX - listBounds.midX : listBounds.midX - row.minX
+            let accessoryInset = halfWidth * 2 - proxy.size.width
+            // During a navigation push, the list and its hosted rows can report different origins.
+            let maximumInset = isSelecting ? controlWidth + 1 : 1
+            guard proxy.size.width > 0, (-1...maximumInset).contains(accessoryInset) else { return nil }
+            let fullRowWidth = isSelecting ? halfWidth * 2 : proxy.size.width
+            return RowMeasurement(listWidth: listBounds.width, fullRowWidth: fullRowWidth)
+        } action: { next in
+            // Keep the width through accessory transitions and horizontal swipe actions.
+            if let next, next.listWidth != measurement?.listWidth {
+                measurement = next
+            }
+        }
     }
 }

@@ -86,7 +86,6 @@ struct CalendarSettings: View {
 
 struct TodayCalendarRows: View {
     let items: [CalendarItem]
-    let hidesFirstSeparator: Bool
     let markingIDs: Set<String>
     let isSelectingReminders: Bool
     let markComplete: (CalendarItem) -> Void
@@ -106,22 +105,22 @@ struct TodayCalendarRows: View {
         ForEach(items) { item in
             let isMarking = markingIDs.contains(item.id)
             HStack(spacing: 0) {
-                if !isSelectingReminders {
-                    Button {
-                        markComplete(item)
-                    } label: {
-                        Image(systemName: isMarking ? "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundStyle(isMarking ? Color.accentColor : Color.secondary.opacity(0.5))
-                            .contentTransition(.symbolEffect(.replace))
-                            .frame(width: 30)
-                            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(isMarking ? "Completing calendar item" : "Mark complete")
-                    .accessibilityHint(item.title)
+                Button {
+                    markComplete(item)
+                } label: {
+                    Image(systemName: isMarking ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isMarking ? Color.accentColor : Color.secondary.opacity(0.5))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isMarking ? "Completing calendar item" : "Mark complete")
+                .accessibilityHint(item.title)
+                .opacity(isSelectingReminders ? 0 : 1)
+                .allowsHitTesting(!isSelectingReminders)
+                .accessibilityHidden(isSelectingReminders)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
@@ -133,7 +132,7 @@ struct TodayCalendarRows: View {
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
-            .listRowSeparator(hidesFirstSeparator && item.id == items.first?.id ? .hidden : .automatic, edges: .top)
+            .selectionDisabled()
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         }
     }
