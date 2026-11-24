@@ -186,11 +186,13 @@ struct ContentView: View {
     private var orderedDestinations: [FolderDestination] {
         let first: [FolderDestination] = homeView == .grouped
             ? [.inbox, .today] : [.today, .inbox]
-        let defaults = first + [.upcoming] + orderedFolders.map { .folder($0.persistentModelID) } + [.completed, .deleted]
+        var missing = first + [.upcoming] + orderedFolders.map { .folder($0.persistentModelID) } + [.completed, .deleted]
         let saved = (try? JSONDecoder().decode([FolderDestination].self, from: homeFolderOrder)) ?? []
-        let available = Set(defaults)
-        var order = saved.filter(available.contains)
-        let missing = defaults.filter { !saved.contains($0) }
+        // Decoded SwiftData identifiers can compare equal to live identifiers while hashing differently.
+        var order = saved.compactMap { destination -> FolderDestination? in
+            guard let index = missing.firstIndex(where: { destination == $0 }) else { return nil }
+            return missing.remove(at: index)
+        }
         let insertion = order.firstIndex { $0 == .completed || $0 == .deleted } ?? order.endIndex
         order.insert(contentsOf: missing, at: insertion)
         return order
