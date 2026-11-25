@@ -99,131 +99,116 @@ private struct TodayProvider: AppIntentTimelineProvider {
 
 private struct TodayWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entry: TodayEntry
-    private let minimumRowHeight: CGFloat = 28
-    private var rowSpacing: CGFloat { family == .systemMedium ? 2 : 4 }
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 22
+    private var headerSpacing: CGFloat { family == .systemSmall ? 4 : 6 }
+    @ScaledMetric(relativeTo: .footnote) private var rowSpacing: CGFloat = 6
+
+    private var checklistRowLimit: Int {
+        switch family {
+        case .systemMedium: dynamicTypeSize.isAccessibilitySize ? 1 : 3
+        case .systemLarge: dynamicTypeSize.isAccessibilitySize ? 3 : 8
+        default: .max
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemMedium ? 4 : 8) {
-            HStack(spacing: 6) {
-                Label(entry.title, systemImage: entry.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                if let count = entry.items?.count, count > 0 {
-                    Text(count, format: .number)
-                        .font(.system(.headline, design: .rounded, weight: .bold))
-                        .accessibilityLabel(Text("\(count) remaining"))
-                        .privacySensitive()
-                }
-            }
-            .foregroundStyle(Color("ReminderAccent"))
-            .widgetAccentable()
+        VStack(alignment: .leading, spacing: 0) {
+            header
 
-            if let items = entry.items {
-                if items.isEmpty {
-                    Text("All clear")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    GeometryReader { space in
-                        let maxRows = max(1, Int((space.size.height + rowSpacing) / (minimumRowHeight + rowSpacing)))
-                        let counts = (1...min(items.count, maxRows)).reversed()
-                        ViewThatFits(in: .vertical) {
-                            ForEach(counts, id: \.self) { count in
-                                reminderList(items, limit: count)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Text("\(items.count) reminders")
-                                .foregroundStyle(.secondary)
+            if let items = entry.items, !items.isEmpty {
+                GeometryReader { space in
+                    let maxRows = max(1, Int(space.size.height / iconWidth))
+                    let counts = (1...min(items.count, maxRows, checklistRowLimit)).reversed()
+                    ViewThatFits(in: .vertical) {
+                        ForEach(counts, id: \.self) { count in
+                            reminderList(items, limit: count, spacing: rowSpacing)
+                            reminderList(items, limit: count, spacing: 0)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("\(items.count) reminders")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, headerSpacing)
                     }
-                    .privacySensitive()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.bottom, 4)
             } else {
-                Text("Open Duewisp to load reminders")
+                Text(entry.items == nil ? "Open Duewisp to load reminders" : "All clear")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .padding(.top, headerSpacing)
             }
-
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func reminderList(_ items: [TodayWidgetSnapshot.Item], limit: Int) -> some View {
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label(entry.title, systemImage: entry.symbol)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let count = entry.items?.count, count > 0 {
+                Text(count, format: .number)
+                    .monospacedDigit()
+                    .accessibilityLabel(Text("\(count) remaining"))
+                    .privacySensitive()
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(Color("ReminderAccent"))
+        .widgetAccentable()
+    }
+
+    private func reminderList(_ items: [TodayWidgetSnapshot.Item], limit: Int, spacing: CGFloat) -> some View {
         let displayed = items.prefix(limit)
-        return VStack(alignment: .leading, spacing: rowSpacing) {
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(displayed.indices, id: \.self) { index in
                 let item = displayed[index]
-                HStack(spacing: 8) {
+                if displayed.count > 1 {
+                    Spacer(minLength: spacing)
+                }
+                HStack(spacing: 12) {
                     if let unlock = item.completionUnlockAt, unlock > entry.date {
                         Image(systemName: "lock.circle")
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 44, height: 28)
+                            .frame(width: iconWidth, height: iconWidth)
                             .accessibilityLabel(Text("Completion available at \(unlock.formatted())"))
                     } else if let id = item.id {
                         Toggle(isOn: false, intent: CompleteWidgetReminder(identifier: id)) {
                             Text("Complete \(item.title)")
                         }
-                        .toggleStyle(ReminderChecklistToggleStyle(title: item.title))
+                        .toggleStyle(ReminderChecklistToggleStyle(title: item.title, circleSize: iconWidth))
                         .id(id)
                     }
-                    reminderText(item)
+                    HStack(spacing: 8) {
+                        Text(item.title)
+                            .font(.footnote)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if item.hasAlarm == true {
+                            Image(systemName: "alarm")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("Alarm")
+                        }
+                    }
                 }
-                .frame(minHeight: minimumRowHeight)
+                .frame(minHeight: iconWidth)
+                .fixedSize(horizontal: false, vertical: true)
+                .privacySensitive()
             }
         }
+        .padding(.top, displayed.count == 1 ? spacing : 0)
     }
-
-    private func reminderText(_ item: TodayWidgetSnapshot.Item) -> some View {
-        VStack(alignment: .leading, spacing: family == .systemMedium ? 0 : 2) {
-            Text(item.title)
-                .font((family == .systemMedium ? Font.footnote : .subheadline).weight(.medium))
-                .lineLimit(family == .systemLarge ? 2 : 1)
-            if let due = item.dueDate {
-                dueDetails(item, due: due)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func dueDetails(_ item: TodayWidgetSnapshot.Item, due: Date) -> some View {
-        let calendar = Calendar.current
-        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: entry.date),
-                                           to: calendar.startOfDay(for: due)).day ?? 0
-        let day: String
-        switch days {
-        case ..<0: day = RelativeDateTimeFormatter().localizedString(from: DateComponents(day: days))
-        case 0: day = String(localized: "Today")
-        case 1: day = String(localized: "Tomorrow")
-        default: day = due.formatted(date: .abbreviated, time: .omitted)
-        }
-        let showsTime = item.isDateOnly == false
-        let time = due.formatted(date: .omitted, time: .shortened)
-        return HStack(spacing: 3) {
-            Text(day)
-            if showsTime {
-                if item.hasAlarm == true {
-                    Image(systemName: "alarm")
-                        .accessibilityLabel("Alarm")
-                } else {
-                    Text("·").accessibilityHidden(true)
-                }
-                Text(time)
-            }
-        }
-        .font(.caption2)
-        .foregroundStyle(days < 0 ? Color.red : Color.secondary)
-        .lineLimit(1)
-    }
-
 }
 
 private struct ReminderChecklistToggleStyle: ToggleStyle {
     let title: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ScaledMetric(relativeTo: .body) private var circleSize = 22.0
+    let circleSize: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -231,9 +216,9 @@ private struct ReminderChecklistToggleStyle: ToggleStyle {
         } label: {
             Image(systemName: configuration.isOn ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: circleSize, weight: .light))
-                .foregroundStyle(configuration.isOn ? Color("ReminderAccent") : Color.secondary)
+                .foregroundStyle(configuration.isOn ? Color("ReminderAccent") : Color(uiColor: .systemGray3))
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                .frame(minWidth: 44, minHeight: 28)
+                .frame(width: circleSize, height: circleSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
