@@ -9,7 +9,7 @@ enum ReminderAlarms {
     private static let stopIntentIDsKey = "alarmIDsWithTimedSnooze"
 
     static func sync(
-        _ alerts: [ReminderNotifications.Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm]
+        _ alerts: [ReminderNotifications.Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm], requestPermission: Bool = true
     ) async -> Set<UUID> {
         let manager = AlarmManager.shared
         var desiredMinutes: [UUID: Int] = [:]
@@ -24,7 +24,7 @@ enum ReminderAlarms {
             let upcoming = alerts.filter { $0.alarmID != nil && $0.date > .now }
             let upcomingGroupAlarms = groupedAlarms.filter { !$0.weekdays.isEmpty || $0.date > .now }
             let groupedIDs = Set(groupedAlarms.map(\.id))
-            if manager.authorizationState == .notDetermined && (!upcoming.isEmpty || !upcomingGroupAlarms.isEmpty) {
+            if requestPermission && manager.authorizationState == .notDetermined && (!upcoming.isEmpty || !upcomingGroupAlarms.isEmpty) {
                 _ = try await manager.requestAuthorization()
             }
             guard !Task.isCancelled, manager.authorizationState == .authorized else { return [] }

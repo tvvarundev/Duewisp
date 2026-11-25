@@ -11,6 +11,9 @@ struct TodayWidgetSnapshot: Codable, Equatable {
         var folderID: String? = nil
         let dueDate: Date?
         let availableAt: Date?
+        var completionUnlockAt: Date? = nil
+        var isDateOnly: Bool? = nil
+        var hasAlarm: Bool? = nil
     }
 
     struct Folder: Codable, Equatable {

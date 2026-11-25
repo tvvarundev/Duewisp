@@ -2,6 +2,7 @@ import Foundation
 import AppIntents
 #if !ALARM_ACTIVITY_EXTENSION
 import SwiftData
+import UIKit
 #endif
 
 @available(iOS 26.0, *)
@@ -65,6 +66,10 @@ struct CompleteReminderAlarm: LiveActivityIntent {
 struct CompleteWidgetReminder: LiveActivityIntent {
     static let title: LocalizedStringResource = "Complete Reminder"
     static let isDiscoverable = false
+    @available(iOS 27.0, *)
+    static var allowedExecutionTargets: ExecutionTargets { .main }
+    @available(iOS 26.0, *)
+    static var supportedModes: IntentModes { .background }
 
     @Parameter(title: "Reminder")
     var identifier: String
@@ -77,14 +82,23 @@ struct CompleteWidgetReminder: LiveActivityIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        #if !ALARM_ACTIVITY_EXTENSION
-        guard let data = Data(base64Encoded: identifier) else { return .result() }
-        let id = try JSONDecoder().decode(PersistentIdentifier.self, from: data)
+        #if ALARM_ACTIVITY_EXTENSION
+        try rejectExtensionExecution()
+        #else
         let context = try DuewispApp.storage.get().mainContext
         let query = FetchDescriptor<Reminder>(predicate: #Predicate { !$0.isCompleted && $0.deletedAt == nil })
-        guard let reminder = try context.fetch(query).first(where: { $0.persistentModelID == id }),
-              (reminder.availableAt ?? .distantPast) <= .now else { return .result() }
-        reminder.complete(in: context)
+        let now = Date.now
+        guard let data = Data(base64Encoded: identifier),
+              let id = try? JSONDecoder().decode(PersistentIdentifier.self, from: data),
+              let reminder = try context.fetch(query).first(where: { $0.persistentModelID.id == id.id }),
+              (reminder.availableAt ?? .distantPast) <= now,
+              (reminder.completionUnlockAt ?? .distantPast) <= now else {
+            TodayWidgetUpdates.refresh(from: context)
+            return .result()
+        }
+        let changesAlerts = ReminderNotifications.Alert(reminder) != nil ||
+            (reminder.repeatMode != nil && reminder.isDateOnly != true)
+        reminder.complete(in: context, at: now)
         do {
             try context.save()
         } catch {
@@ -92,11 +106,34 @@ struct CompleteWidgetReminder: LiveActivityIntent {
             throw error
         }
         TodayWidgetUpdates.refresh(from: context)
-        await ReminderNotifications.sync(
-            try context.fetch(query).compactMap(ReminderNotifications.Alert.init),
-            groupedAlarms: try context.fetch(FetchDescriptor<AlarmGroup>()).flatMap(\.schedule)
-        )
+        guard changesAlerts else { return .result() }
+        let alerts = try context.fetch(query).compactMap(ReminderNotifications.Alert.init)
+        let groups = try context.fetch(FetchDescriptor<AlarmGroup>()).flatMap(\.schedule)
+        let application = UIApplication.shared
+        var backgroundID = UIBackgroundTaskIdentifier.invalid
+        func finishBackgroundTask() {
+            guard backgroundID != .invalid else { return }
+            application.endBackgroundTask(backgroundID)
+            backgroundID = .invalid
+        }
+        backgroundID = application.beginBackgroundTask(withName: "Update reminder alerts") {
+            finishBackgroundTask()
+        }
+        if backgroundID == .invalid {
+            await ReminderNotifications.sync(alerts, groupedAlarms: groups, requestPermission: false)
+        } else {
+            Task { @MainActor in
+                defer { finishBackgroundTask() }
+                await ReminderNotifications.sync(alerts, groupedAlarms: groups, requestPermission: false)
+            }
+        }
         #endif
         return .result()
     }
+
+    #if ALARM_ACTIVITY_EXTENSION
+    private func rejectExtensionExecution() throws {
+        throw CocoaError(.featureUnsupported)
+    }
+    #endif
 }

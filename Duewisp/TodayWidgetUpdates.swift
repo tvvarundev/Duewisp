@@ -21,7 +21,10 @@ enum TodayWidgetUpdates {
                     id: try encoder.encode(reminder.persistentModelID).base64EncodedString(),
                     folderID: try reminder.folder.map { try encoder.encode($0.persistentModelID).base64EncodedString() },
                     dueDate: reminder.dueDate,
-                    availableAt: reminder.availableAt
+                    availableAt: reminder.availableAt,
+                    completionUnlockAt: reminder.completionUnlockAt,
+                    isDateOnly: reminder.isDateOnly == true,
+                    hasAlarm: reminder.alarmID != nil && reminder.alarmStopped != true
                 )
             }
             let folders = try context.fetch(FetchDescriptor<ReminderFolder>(sortBy: [SortDescriptor(\.name)])).map {

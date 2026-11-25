@@ -26,7 +26,9 @@ enum ReminderNotifications {
     @MainActor private static var pendingSync: Task<Void, Never>?
 
     @MainActor
-    static func sync(_ alerts: [Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm]) async {
+    static func sync(
+        _ alerts: [Alert], groupedAlarms: [AlarmGroup.ScheduledAlarm], requestPermission: Bool = true
+    ) async {
         let previous = pendingSync
         previous?.cancel()
         let task = Task {
@@ -35,7 +37,7 @@ enum ReminderNotifications {
 
             let scheduledAlarms: Set<UUID>
             if #available(iOS 26.0, *) {
-                scheduledAlarms = await ReminderAlarms.sync(alerts, groupedAlarms: groupedAlarms)
+                scheduledAlarms = await ReminderAlarms.sync(alerts, groupedAlarms: groupedAlarms, requestPermission: requestPermission)
             } else {
                 scheduledAlarms = []
             }
@@ -44,14 +46,14 @@ enum ReminderNotifications {
                 guard let alarmID = alert.alarmID else { return true }
                 return !scheduledAlarms.contains(alarmID)
             }
-            await syncNotifications(notifications)
+            await syncNotifications(notifications, requestPermission: requestPermission)
         }
         pendingSync = task
         await task.value
     }
 
     @MainActor
-    private static func syncNotifications(_ alerts: [Alert]) async {
+    private static func syncNotifications(_ alerts: [Alert], requestPermission: Bool) async {
         let center = UNUserNotificationCenter.current()
         let now = Date.now
         let encoder = JSONEncoder()
@@ -72,8 +74,13 @@ enum ReminderNotifications {
         guard !upcoming.isEmpty else { return }
 
         do {
-            guard try await center.requestAuthorization(options: [.alert, .sound]),
-                  !Task.isCancelled else { return }
+            if requestPermission {
+                guard try await center.requestAuthorization(options: [.alert, .sound]) else { return }
+            } else {
+                let status = await center.notificationSettings().authorizationStatus
+                guard status == .authorized || status == .provisional || status == .ephemeral else { return }
+            }
+            guard !Task.isCancelled else { return }
 
             let requests = Dictionary(uniqueKeysWithValues: existing.map { ($0.identifier, $0) })
             for (identifier, alert) in upcoming {
