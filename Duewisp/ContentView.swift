@@ -34,8 +34,7 @@ struct ContentView: View {
     @State private var reminderEditMode: EditMode = .inactive
     @State private var selectedReminderRows: Set<ReminderRowID> = []
     @State private var pendingDeletionIDs: Set<PersistentIdentifier>?
-    @State private var newReminder: NewReminder?
-    @State private var reminderToEdit: Reminder?
+    @State private var reminderEditorRequest: ReminderEditorRequest?
     @State private var folderToRename: ReminderFolder?
     @State private var folderName = ""
     @State private var showingNamePrompt = false
@@ -170,9 +169,10 @@ struct ContentView: View {
         }
     }
 
-    private struct NewReminder: Identifiable {
+    private struct ReminderEditorRequest: Identifiable {
         let id = UUID()
-        let folder: ReminderFolder?
+        var reminder: Reminder? = nil
+        var folder: ReminderFolder? = nil
         var dueDate: Date? = nil
     }
 
@@ -234,8 +234,9 @@ struct ContentView: View {
             guard selectedTab == .reminders, openedFolder == nil else { return }
             withAnimation { openedFolder = destination }
         }
-        .sheet(item: $reminderToEdit) { reminder in
-            ReminderEditor(reminder: reminder)
+        .sheet(item: $reminderEditorRequest) { request in
+            ReminderEditor(reminder: request.reminder, initialFolder: request.folder, initialDueDate: request.dueDate)
+                .id(request.id)
         }
         .onChange(of: selectedTab) { _, tab in
             if tab != .search { tabBeforeSearch = tab }
@@ -397,9 +398,6 @@ struct ContentView: View {
                     }
                 }
             }
-        }
-        .sheet(item: $newReminder) { request in
-            ReminderEditor(initialFolder: request.folder, initialDueDate: request.dueDate)
         }
         .sheet(isPresented: $showingFolderOrder) {
             FolderOrderEditor(folders: orderedDestinations, name: name(for:)) { order in
@@ -674,13 +672,13 @@ struct ContentView: View {
                 newReminderButton {
                     switch destination {
                     case .today:
-                        newReminder = NewReminder(folder: nil, dueDate: .now)
+                        reminderEditorRequest = ReminderEditorRequest(folder: nil, dueDate: .now)
                     case let .folder(id):
                         if let folder = folders.first(where: { $0.persistentModelID == id }) {
-                            newReminder = NewReminder(folder: folder)
+                            reminderEditorRequest = ReminderEditorRequest(folder: folder)
                         }
                     default:
-                        newReminder = NewReminder(folder: nil)
+                        reminderEditorRequest = ReminderEditorRequest(folder: nil)
                     }
                 }
             }
@@ -788,7 +786,7 @@ struct ContentView: View {
             }
             if grouped {
                 addReminderRow(in: name) {
-                    newReminder = NewReminder(folder: nil, dueDate: .now)
+                    reminderEditorRequest = ReminderEditorRequest(folder: nil, dueDate: .now)
                 }
             }
         }
@@ -844,7 +842,7 @@ struct ContentView: View {
                     }
                 reminderRows(remaining, in: rowContext, todayIDs: todayIDs)
                 addReminderRow(in: name) {
-                    newReminder = NewReminder(folder: folder)
+                    reminderEditorRequest = ReminderEditorRequest(folder: folder)
                 }
                 if folder != nil && !completedRepeats.isEmpty {
                     Text("Completed Repeats")
@@ -1037,7 +1035,7 @@ struct ContentView: View {
                 } else {
                     Button {
                         guard !isSelectingReminders else { return }
-                        reminderToEdit = reminder
+                        reminderEditorRequest = ReminderEditorRequest(reminder: reminder)
                     } label: {
                         label
                     }
