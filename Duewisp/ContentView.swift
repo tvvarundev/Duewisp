@@ -497,10 +497,10 @@ struct ContentView: View {
         .map(\.reminder)
         let completed = visible.filter(\.isCompleted).sorted(by: Reminder.completedMoreRecently)
         let todayIDs = Set(today.map(\.persistentModelID))
-        let remindersByFolder = Dictionary(grouping: visible) {
+        let remindersByFolder = Dictionary(grouping: reminders) {
             $0.folder?.persistentModelID
         }
-        let inbox = (remindersByFolder[nil] ?? []).filter { !todayIDs.contains($0.persistentModelID) }
+        let inbox = visible.filter { $0.folder == nil && !todayIDs.contains($0.persistentModelID) }
 
         let expanded = homeView == .mixed ? expandedFolders : []
 
@@ -521,7 +521,7 @@ struct ContentView: View {
             case .today:
                 todaySection(today)
             case .inbox:
-                folderSections(nil, reminders: inbox)
+                folderSections(nil, reminders: inbox, at: date)
             case .upcoming:
                 if upcoming.isEmpty {
                     ContentUnavailableView("No Upcoming Reminders", systemImage: "calendar")
@@ -554,14 +554,14 @@ struct ContentView: View {
                 }
             case let .folder(id):
                 if let folder = folders.first(where: { $0.persistentModelID == id }) {
-                    folderSections(folder, reminders: remindersByFolder[id] ?? [], todayIDs: todayIDs)
+                    folderSections(folder, reminders: remindersByFolder[id] ?? [], at: date, todayIDs: todayIDs)
                 }
             case nil:
                 ForEach(orderedDestinations, id: \.self) { folderDestination in
                     switch folderDestination {
                     case .inbox:
                         if homeView == .grouped || expanded.contains(.inbox) {
-                            folderSections(nil, reminders: inbox, grouped: true)
+                            folderSections(nil, reminders: inbox, at: date, grouped: true)
                         } else {
                             Section {
                                 folderLink(Text("Inbox"), icon: "tray", count: inbox.filter { !$0.isCompleted }.count, destination: .inbox)
@@ -583,7 +583,7 @@ struct ContentView: View {
                         if let folder = folders.first(where: { $0.persistentModelID == id }) {
                             let items = remindersByFolder[id] ?? []
                             if homeView == .grouped || (homeView == .mixed && showsInline(folder)) {
-                                folderSections(folder, reminders: items, todayIDs: todayIDs, grouped: true)
+                                folderSections(folder, reminders: items, at: date, todayIDs: todayIDs, grouped: true)
                             } else {
                                 folderLink(Text(verbatim: folder.name), icon: "folder", count: items.filter { !$0.isCompleted }.count, destination: .folder(id))
                                     .swipeActions(allowsFullSwipe: false) {
@@ -811,18 +811,27 @@ struct ContentView: View {
 
     @ViewBuilder
     private func folderSections(
-        _ folder: ReminderFolder?, reminders: [Reminder], todayIDs: Set<PersistentIdentifier> = [], grouped: Bool = false
+        _ folder: ReminderFolder?, reminders: [Reminder], at date: Date, todayIDs: Set<PersistentIdentifier> = [], grouped: Bool = false
     ) -> some View {
         let name = folder?.name ?? String(localized: "Inbox")
         let remaining = reminders.filter { !$0.isCompleted }
+        let nextDay = Calendar.current.dateInterval(of: .day, for: date)?.end ?? date
+        let active = remaining.filter { ($0.dueDate ?? .distantPast) < nextDay }
+        let upcoming = remaining.compactMap { reminder -> (reminder: Reminder, due: Date)? in
+            guard let due = reminder.dueDate, due >= nextDay else { return nil }
+            return (reminder, due)
+        }
+        .sorted { $0.due < $1.due }
+        .map(\.reminder)
+        let rowContext = ReminderListSection.folder(folder?.persistentModelID)
         let completedRepeats = reminders.filter { reminder in
             reminder.isCompleted && (reminder.repeatMode == ReminderRepeatMode.regularly.rawValue ||
                                      reminder.repeatMode == ReminderRepeatMode.afterCompletion.rawValue)
         }
         .sorted(by: Reminder.completedMoreRecently)
 
-        Section {
-            if grouped {
+        if grouped {
+            Section {
                 folderHeader(
                     name,
                     status: reminders.isEmpty ? "No reminders" : remaining.isEmpty ? "All done" : "\(remaining.count) remaining",
@@ -833,25 +842,33 @@ struct ContentView: View {
                             folderActions(for: folder)
                         }
                     }
-            }
-            reminderRows(remaining, in: .folder(folder?.persistentModelID), todayIDs: todayIDs)
-            if grouped {
+                reminderRows(remaining, in: rowContext, todayIDs: todayIDs)
                 addReminderRow(in: name) {
                     newReminder = NewReminder(folder: folder)
                 }
+                if folder != nil && !completedRepeats.isEmpty {
+                    Text("Completed Repeats")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                    reminderRows(completedRepeats, in: .folderHistory)
+                }
             }
-            if grouped && folder != nil && !completedRepeats.isEmpty {
-                Text("Completed Repeats")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.isHeader)
-                reminderRows(completedRepeats, in: .folderHistory)
+        } else {
+            if !active.isEmpty {
+                Section("Active") {
+                    reminderRows(active, in: rowContext, todayIDs: todayIDs)
+                }
             }
-        }
-
-        if !grouped && folder != nil && !completedRepeats.isEmpty {
-            Section("Completed Repeats") {
-                reminderRows(completedRepeats, in: .folderHistory)
+            if !upcoming.isEmpty {
+                Section("Upcoming") {
+                    reminderRows(upcoming, in: rowContext)
+                }
+            }
+            if folder != nil && !completedRepeats.isEmpty {
+                Section("Completed Repeats") {
+                    reminderRows(completedRepeats, in: .folderHistory)
+                }
             }
         }
     }
