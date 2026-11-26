@@ -14,6 +14,7 @@ struct TodayWidgetSnapshot: Codable, Equatable {
         var completionUnlockAt: Date? = nil
         var isDateOnly: Bool? = nil
         var hasAlarm: Bool? = nil
+        var calendarDay: Date? = nil
     }
 
     struct Folder: Codable, Equatable {
@@ -23,6 +24,8 @@ struct TodayWidgetSnapshot: Codable, Equatable {
 
     var folders: [Folder]? = nil
     let items: [Item]
+    var calendarItems: [Item]? = nil
+    var completedCalendarIDs: [String]? = nil
 
     static var fileURL: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)?
@@ -35,9 +38,15 @@ struct TodayWidgetSnapshot: Codable, Equatable {
     }
 
     func dueItems(at date: Date, calendar: Calendar = .current) -> [Item] {
-        items.filter {
+        let reminders = items.filter {
             ($0.availableAt ?? .distantPast) <= date &&
                 $0.dueDate.map { calendar.compare($0, to: date, toGranularity: .day) != .orderedDescending } == true
         }
+        let completedIDs = Set(completedCalendarIDs ?? [])
+        let events = (calendarItems ?? []).filter { item in
+            guard let day = item.calendarDay, let id = item.id else { return false }
+            return calendar.isDate(day, inSameDayAs: date) && !completedIDs.contains(id)
+        }
+        return reminders + events
     }
 }

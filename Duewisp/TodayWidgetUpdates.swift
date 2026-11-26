@@ -5,7 +5,7 @@ import WidgetKit
 
 enum TodayWidgetUpdates {
     @MainActor
-    static func refresh(from context: ModelContext) {
+    static func refresh(from context: ModelContext, calendarItems: [TodayWidgetSnapshot.Item]? = nil) {
         guard let url = TodayWidgetSnapshot.fileURL else { return }
 
         do {
@@ -31,7 +31,22 @@ enum TodayWidgetUpdates {
                 TodayWidgetSnapshot.Folder(id: try encoder.encode($0.persistentModelID).base64EncodedString(), name: $0.name)
             }
             let previous = TodayWidgetSnapshot.read()
-            let snapshot = TodayWidgetSnapshot(folders: folders, items: items)
+            let events = calendarItems ?? previous?.calendarItems ?? []
+            let eventIDs = Set(events.compactMap(\.id))
+            var completedIDs: [String] = []
+            if !eventIDs.isEmpty {
+                let completions = FetchDescriptor<Reminder>(
+                    predicate: #Predicate { $0.calendarOccurrenceID != nil && $0.deletedAt == nil }
+                )
+                completedIDs = Set(try context.fetch(completions).compactMap(\.calendarOccurrenceID))
+                    .intersection(eventIDs).sorted()
+            }
+            let snapshot = TodayWidgetSnapshot(
+                folders: folders,
+                items: items,
+                calendarItems: events.isEmpty ? nil : events,
+                completedCalendarIDs: completedIDs.isEmpty ? nil : completedIDs
+            )
             guard previous != snapshot else { return }
             try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
             WidgetCenter.shared.reloadTimelines(ofKind: TodayWidgetSnapshot.kind)

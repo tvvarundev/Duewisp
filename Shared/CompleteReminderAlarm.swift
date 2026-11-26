@@ -74,10 +74,14 @@ struct CompleteWidgetReminder: LiveActivityIntent {
     @Parameter(title: "Reminder")
     var identifier: String
 
+    @Parameter(title: "Calendar Event", default: false)
+    var isCalendarEvent: Bool
+
     init() {}
 
-    init(identifier: String) {
+    init(identifier: String, isCalendarEvent: Bool = false) {
         self.identifier = identifier
+        self.isCalendarEvent = isCalendarEvent
     }
 
     @MainActor
@@ -86,6 +90,10 @@ struct CompleteWidgetReminder: LiveActivityIntent {
         try rejectExtensionExecution()
         #else
         let context = try DuewispApp.storage.get().mainContext
+        if isCalendarEvent {
+            try completeCalendarEvent(in: context)
+            return .result()
+        }
         let query = FetchDescriptor<Reminder>(predicate: #Predicate { !$0.isCompleted && $0.deletedAt == nil })
         let now = Date.now
         guard let data = Data(base64Encoded: identifier),
@@ -130,6 +138,39 @@ struct CompleteWidgetReminder: LiveActivityIntent {
         #endif
         return .result()
     }
+
+    #if !ALARM_ACTIVITY_EXTENSION
+    @MainActor
+    private func completeCalendarEvent(in context: ModelContext) throws {
+        let now = Date.now
+        guard let event = TodayWidgetSnapshot.read()?.dueItems(at: now).first(where: {
+            $0.calendarDay != nil && $0.id == identifier
+        }) else {
+            TodayWidgetUpdates.refresh(from: context)
+            return
+        }
+
+        let eventID = identifier
+        var existing = FetchDescriptor<Reminder>(
+            predicate: #Predicate { $0.calendarOccurrenceID == eventID && $0.deletedAt == nil }
+        )
+        existing.fetchLimit = 1
+        if try context.fetch(existing).isEmpty {
+            let completion = Reminder(title: event.title, dueDate: event.dueDate ?? event.calendarDay)
+            completion.calendarOccurrenceID = eventID
+            completion.isDateOnly = event.isDateOnly ?? true
+            context.insert(completion)
+            completion.complete(in: context, at: now)
+            do {
+                try context.save()
+            } catch {
+                context.rollback()
+                throw error
+            }
+        }
+        TodayWidgetUpdates.refresh(from: context)
+    }
+    #endif
 
     #if ALARM_ACTIVITY_EXTENSION
     private func rejectExtensionExecution() throws {

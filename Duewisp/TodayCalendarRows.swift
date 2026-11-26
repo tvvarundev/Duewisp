@@ -137,8 +137,8 @@ struct TodayCalendarRows: View {
         }
     }
 
-    static func load(from store: EKEventStore, calendar: Calendar) -> [CalendarItem] {
-        let today = calendar.startOfDay(for: .now)
+    static func load(from store: EKEventStore, calendar: Calendar, at date: Date = .now) -> [CalendarItem] {
+        let today = calendar.startOfDay(for: date)
         guard let end = calendar.date(byAdding: .day, value: 1, to: today) else { return [] }
         let predicate = store.predicateForEvents(withStart: today, end: end, calendars: nil)
         return store.events(matching: predicate).compactMap { event -> CalendarItem? in

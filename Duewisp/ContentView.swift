@@ -36,6 +36,7 @@ struct ContentView: View {
     @State private var pendingDeletionIDs: Set<PersistentIdentifier>?
     @State private var reminderEditorRequest: ReminderEditorRequest?
     @State private var folderToRename: ReminderFolder?
+    @State private var folderToDelete: ReminderFolder?
     @State private var folderName = ""
     @State private var showingNamePrompt = false
     @State private var showingSaveError = false
@@ -256,7 +257,7 @@ struct ContentView: View {
             reminderEditMode = .inactive
             selectedReminderRows.removeAll()
         }
-        .task(id: showsCalendarItems) {
+        .onChange(of: [showsCalendarItems, showsBirthdays, showsAllDayEvents, showsTimedEvents], initial: true) {
             refreshTodayCalendar()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -331,6 +332,7 @@ struct ContentView: View {
     private var searchResults: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let matches = query.isEmpty ? [] : reminders.filter { reminder in
+            guard !reminder.isCompleted else { return false }
             let folderName = reminder.calendarOccurrenceID == nil
                 ? (reminder.folder?.name ?? String(localized: "Inbox"))
                 : String(localized: "Calendar")
@@ -412,6 +414,20 @@ struct ContentView: View {
         .sheet(isPresented: $showingInlineFolders) {
             inlineFolderSettings
         }
+        .alert("Delete Folder?", isPresented: Binding(
+            get: { folderToDelete != nil },
+            set: { if !$0 { folderToDelete = nil } }
+        ), presenting: folderToDelete) { folder in
+            Button("Delete Folder", role: .destructive) {
+                withAnimation {
+                    modelContext.delete(folder)
+                    saveChanges()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { folder in
+            Text("Delete “\(folder.name)”? Its reminders will be kept without a folder.")
+        }
         .alert(folderToRename == nil ? "New Folder" : "Rename Folder", isPresented: $showingNamePrompt) {
             TextField("Name", text: $folderName)
             Button("Cancel", role: .cancel) {}
@@ -431,11 +447,38 @@ struct ContentView: View {
     private func refreshTodayCalendar() {
         guard showsCalendarItems, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
             todayCalendarItems = []
+            TodayWidgetUpdates.refresh(from: modelContext, calendarItems: [])
             return
         }
         let store = calendarStore ?? EKEventStore()
         calendarStore = store
-        todayCalendarItems = TodayCalendarRows.load(from: store, calendar: calendar)
+        let today = calendar.startOfDay(for: .now)
+        todayCalendarItems = TodayCalendarRows.load(from: store, calendar: calendar, at: today)
+        var widgetItems = widgetCalendarItems(todayCalendarItems, on: today)
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) {
+            let events = TodayCalendarRows.load(from: store, calendar: calendar, at: tomorrow)
+            widgetItems += widgetCalendarItems(events, on: tomorrow)
+        }
+        TodayWidgetUpdates.refresh(from: modelContext, calendarItems: widgetItems)
+    }
+
+    private func widgetCalendarItems(
+        _ items: [TodayCalendarRows.CalendarItem], on day: Date
+    ) -> [TodayWidgetSnapshot.Item] {
+        items.filter { showsCalendarItem($0) }.map { item in
+            TodayWidgetSnapshot.Item(
+                title: item.title, id: item.id, dueDate: item.date, availableAt: nil,
+                isDateOnly: item.kind != .timed, calendarDay: day
+            )
+        }
+    }
+
+    private func showsCalendarItem(_ item: TodayCalendarRows.CalendarItem) -> Bool {
+        switch item.kind {
+        case .birthday: showsBirthdays
+        case .allDay: showsAllDayEvents
+        case .timed: showsTimedEvents
+        }
     }
 
     @available(iOS 26.0, *)
@@ -495,7 +538,7 @@ struct ContentView: View {
         .map(\.reminder)
         let completed = visible.filter(\.isCompleted).sorted(by: Reminder.completedMoreRecently)
         let todayIDs = Set(today.map(\.persistentModelID))
-        let remindersByFolder = Dictionary(grouping: reminders) {
+        let remindersByFolder = Dictionary(grouping: reminders.filter { !$0.isCompleted }) {
             $0.folder?.persistentModelID
         }
         let inbox = visible.filter { $0.folder == nil && !todayIDs.contains($0.persistentModelID) }
@@ -625,7 +668,7 @@ struct ContentView: View {
             get: { openedFolder == destination && pendingDeletionIDs != nil },
             set: { if !$0 && openedFolder == destination { pendingDeletionIDs = nil } }
         ), presenting: pendingDeletionIDs) { ids in
-            Button("Delete", role: .destructive) {
+            Button(destination != .deleted && completedRepeat(in: ids) != nil ? "Delete This Occurrence" : "Delete", role: .destructive) {
                 if destination == .deleted {
                     permanentlyDeleteReminders(ids)
                 } else {
@@ -633,9 +676,15 @@ struct ContentView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
+        } message: { ids in
             if destination == .deleted {
                 Text("These reminders will be permanently removed.")
+            } else if let reminder = completedRepeat(in: ids) {
+                if let date = nextRepeatDate(for: reminder, in: repeatOccurrences) {
+                    Text("The next reminder is still scheduled for \(date.formatted(date: .abbreviated, time: .omitted)).")
+                } else {
+                    Text("There is no upcoming occurrence.")
+                }
             }
         }
         .alert("Couldn’t Save Changes", isPresented: Binding(
@@ -833,12 +882,7 @@ struct ContentView: View {
             }
             let completedIDs = Set(reminders.compactMap(\.calendarOccurrenceID))
             let calendarItems = todayCalendarItems.filter { item in
-                guard showsCalendarItems, !completedIDs.contains(item.id) else { return false }
-                switch item.kind {
-                case .birthday: return showsBirthdays
-                case .allDay: return showsAllDayEvents
-                case .timed: return showsTimedEvents
-                }
+                showsCalendarItems && !completedIDs.contains(item.id) && showsCalendarItem(item)
             }
             reminderRows(today, in: .today)
             if !calendarItems.isEmpty {
@@ -859,12 +903,10 @@ struct ContentView: View {
 
     @ViewBuilder
     private func folderActions(for folder: ReminderFolder) -> some View {
-        Button("Delete Folder", systemImage: "trash", role: .destructive) {
-            withAnimation {
-                modelContext.delete(folder)
-                saveChanges()
-            }
+        Button("Delete Folder", systemImage: "trash") {
+            folderToDelete = folder
         }
+        .tint(.red)
         Button("Rename Folder", systemImage: "pencil") {
             folderToRename = folder
             folderName = folder.name
@@ -887,12 +929,6 @@ struct ContentView: View {
         .sorted { $0.due < $1.due }
         .map(\.reminder)
         let rowContext = ReminderListSection.folder(folder?.persistentModelID)
-        let completedRepeats = reminders.filter { reminder in
-            reminder.isCompleted && (reminder.repeatMode == ReminderRepeatMode.regularly.rawValue ||
-                                     reminder.repeatMode == ReminderRepeatMode.afterCompletion.rawValue)
-        }
-        .sorted(by: Reminder.completedMoreRecently)
-
         if grouped {
             Section {
                 folderHeader(
@@ -909,13 +945,6 @@ struct ContentView: View {
                 addReminderRow(in: name) {
                     reminderEditorRequest = ReminderEditorRequest(folder: folder)
                 }
-                if folder != nil && !completedRepeats.isEmpty {
-                    Text("Completed Repeats")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityAddTraits(.isHeader)
-                    reminderRows(completedRepeats, in: .folderHistory)
-                }
             }
         } else {
             if !active.isEmpty {
@@ -926,11 +955,6 @@ struct ContentView: View {
             if !upcoming.isEmpty {
                 Section("Upcoming") {
                     reminderRows(upcoming, in: rowContext)
-                }
-            }
-            if folder != nil && !completedRepeats.isEmpty {
-                Section("Completed Repeats") {
-                    reminderRows(completedRepeats, in: .folderHistory)
                 }
             }
         }
@@ -975,7 +999,7 @@ struct ContentView: View {
     }
 
     private enum ReminderListSection: Hashable {
-        case today, upcoming, search, completed, folderHistory, deleted
+        case today, upcoming, search, completed, deleted
         case folder(PersistentIdentifier?)
     }
 
@@ -984,11 +1008,37 @@ struct ContentView: View {
         let section: ReminderListSection
     }
 
+    private var repeatOccurrences: [UUID?: [Reminder]] {
+        Dictionary(grouping: (reminders + deletedReminders).filter { $0.generatedOccurrenceID != nil },
+                   by: \.generatedOccurrenceID)
+    }
+
+    private func completedRepeat(in ids: Set<PersistentIdentifier>) -> Reminder? {
+        guard ids.count == 1, let id = ids.first,
+              let reminder = reminders.first(where: { $0.persistentModelID == id && $0.isCompleted }),
+              repeatDetails(for: reminder) != nil else { return nil }
+        return reminder
+    }
+
+    private func nextRepeatDate(for reminder: Reminder, in occurrences: [UUID?: [Reminder]]) -> Date? {
+        var nextID = reminder.scheduledOccurrenceID
+        var visited: Set<UUID> = []
+        while let id = nextID, visited.insert(id).inserted, let occurrence = occurrences[id]?.first {
+            if !occurrence.isCompleted {
+                return occurrence.deletedAt == nil ? occurrence.dueDate : nil
+            }
+            nextID = occurrence.scheduledOccurrenceID
+        }
+        return nil
+    }
+
     private func reminderRows(
         _ reminders: [Reminder], in section: ReminderListSection, todayIDs: Set<PersistentIdentifier> = []
     ) -> some View {
         let blockedOccurrences = section == .upcoming ? Reminder.laterOpenOccurrences(in: self.reminders) : []
         let today = Calendar.current.startOfDay(for: .now)
+        let showsRepeatHistory = section == .completed
+        let occurrences = showsRepeatHistory ? repeatOccurrences : [:]
         let rows = reminders.map { reminder in
             let badge: Text?
             if reminder.calendarOccurrenceID != nil {
@@ -1021,6 +1071,7 @@ struct ContentView: View {
             let isBlockedOccurrence = isWaitingToComplete || blockedOccurrences.contains(row.id.reminder)
             let completionSymbol = isBlockedOccurrence ? "lock.circle" : (row.isCompleted || isMarkingComplete ? "checkmark.circle.fill" : "circle")
             let repeatDescription = repeatDetails(for: reminder)
+            let isCompletedRepeat = showsRepeatHistory && row.isCompleted && repeatDescription != nil
             let label = VStack(alignment: .leading, spacing: 2) {
                 Text(reminder.title)
                     .foregroundStyle(row.isCompleted ? .secondary : .primary)
@@ -1035,6 +1086,17 @@ struct ContentView: View {
                     Text(repeatDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if isCompletedRepeat {
+                    Group {
+                        if let date = nextRepeatDate(for: reminder, in: occurrences) {
+                            Text("Next occurrence: \(date.formatted(date: .abbreviated, time: .omitted))")
+                        } else {
+                            Text("No upcoming occurrence")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 if let badge = row.badge {
                     badge
@@ -1113,7 +1175,12 @@ struct ContentView: View {
             .tag(row.id)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .swipeActions(allowsFullSwipe: false) {
-                if !isSelectingReminders {
+                if !isSelectingReminders && isCompletedRepeat {
+                    Button("Delete This Occurrence", systemImage: "trash") {
+                        pendingDeletionIDs = [reminder.persistentModelID]
+                    }
+                    .tint(.red)
+                } else if !isSelectingReminders {
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         withAnimation {
                             reminder.deletedAt = .now

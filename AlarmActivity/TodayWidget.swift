@@ -149,14 +149,22 @@ private struct TodayWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.bottom, 4)
-            } else {
-                Text(entry.items == nil ? "Open Duewisp to load reminders" : "All clear")
+            } else if entry.items == nil {
+                Text("Open Duewisp to load reminders")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding(.top, headerSpacing)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay {
+            if entry.items?.isEmpty == true {
+                Text("All clear")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
     }
 
     private var header: some View {
@@ -181,7 +189,7 @@ private struct TodayWidgetView: View {
 
     private func reminderList(_ items: [TodayWidgetSnapshot.Item], limit: Int, spacing: CGFloat) -> some View {
         let displayed = items.prefix(limit).enumerated().map { index, item in
-            (key: item.id ?? "preview-\(index)", item: item)
+            (key: item.calendarDay != nil ? "calendar-\(item.id ?? "")" : item.id ?? "preview-\(index)", item: item)
         }
         return VStack(alignment: .leading, spacing: spacing) {
             ForEach(displayed, id: \.key) { row in
@@ -194,7 +202,7 @@ private struct TodayWidgetView: View {
                             .frame(width: iconWidth, height: iconWidth)
                             .accessibilityLabel(Text("Completion available at \(unlock.formatted())"))
                     } else if let id = item.id {
-                        Toggle(isOn: false, intent: CompleteWidgetReminder(identifier: id)) {
+                        Toggle(isOn: false, intent: CompleteWidgetReminder(identifier: id, isCalendarEvent: item.calendarDay != nil)) {
                             Text("Complete \(item.title)")
                         }
                         .toggleStyle(ReminderChecklistToggleStyle(title: item.title, circleSize: iconWidth))
@@ -205,7 +213,7 @@ private struct TodayWidgetView: View {
                             .font(.footnote)
                             .lineLimit(1)
                         Spacer(minLength: 0)
-                        if family != .systemSmall, let dueDate = item.dueDate {
+                        if family != .systemSmall, item.calendarDay == nil, let dueDate = item.dueDate {
                             let calendar = Calendar.current
                             let overdueDays = calendar.dateComponents(
                                 [.day],
@@ -222,7 +230,12 @@ private struct TodayWidgetView: View {
                                     )))
                             }
                         }
-                        if item.hasAlarm == true {
+                        if item.calendarDay != nil {
+                            Image(systemName: "calendar")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("From Calendar")
+                        } else if item.hasAlarm == true {
                             Image(systemName: "alarm")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
