@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var isSearchPresented = false
     @State private var openedFolder: FolderDestination?
+    @State private var pendingWidgetFolder: FolderDestination?
     @State private var reminderEditMode: EditMode = .inactive
     @State private var selectedReminderRows: Set<ReminderRowID> = []
     @State private var pendingDeletionIDs: Set<PersistentIdentifier>?
@@ -219,6 +220,20 @@ struct ContentView: View {
     var body: some View {
         let schedule = scenePhase == .active ? alarmSchedule : nil
         tabs
+        .onOpenURL(perform: openWidgetFolder)
+        .task(id: scenePhase == .active ? pendingWidgetFolder : nil) {
+            guard scenePhase == .active, let destination = pendingWidgetFolder else { return }
+            // Let the Home Screen launch transition settle before pushing the folder.
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, pendingWidgetFolder == destination else { return }
+            pendingWidgetFolder = nil
+            guard selectedTab == .reminders, openedFolder == nil else { return }
+            withAnimation { openedFolder = destination }
+        }
         .sheet(item: $reminderToEdit) { reminder in
             ReminderEditor(reminder: reminder)
         }
@@ -431,6 +446,34 @@ struct ContentView: View {
         isAlarmPermissionDenied = AlarmManager.shared.authorizationState == .denied
         // Duewisp alarms use countdowns only after snoozing.
         snoozedAlarmIDs = Set(alarms.filter { $0.state == .countdown }.map(\.id))
+    }
+
+    private func openWidgetFolder(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "duewisp", components.host == "folder",
+              let id = components.queryItems?.first(where: { $0.name == "id" })?.value else { return }
+
+        let destination: FolderDestination?
+        switch id {
+        case "today":
+            destination = .today
+        case "inbox":
+            destination = .inbox
+        default:
+            guard let data = Data(base64Encoded: id),
+                  let identifier = try? JSONDecoder().decode(PersistentIdentifier.self, from: data) else { return }
+            destination = folders.first { $0.persistentModelID.id == identifier.id }
+                .map { .folder($0.persistentModelID) }
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        let alreadyOpen = openedFolder == destination
+        withTransaction(transaction) {
+            selectedTab = .reminders
+            if !alreadyOpen { openedFolder = nil }
+        }
+        pendingWidgetFolder = alreadyOpen ? nil : destination
     }
 
     private enum FolderDestination: Hashable, Codable {

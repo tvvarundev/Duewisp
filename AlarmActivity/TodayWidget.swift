@@ -17,6 +17,7 @@ struct TodayWidget: Widget {
         AppIntentConfiguration(kind: TodayWidgetSnapshot.kind, intent: ReminderWidgetSettings.self, provider: TodayProvider()) { entry in
             TodayWidgetView(entry: entry)
                 .containerBackground(.background, for: .widget)
+                .widgetURL(entry.folderURL)
         }
         .configurationDisplayName("Duewisp Today")
         .description("See reminders due today or overdue.")
@@ -34,6 +35,7 @@ struct ReminderWidgetSettings: WidgetConfigurationIntent {
 struct WidgetReminderFolder: AppEntity {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Folder"
     static let defaultQuery = WidgetReminderFolderQuery()
+    static var today: Self { Self(id: "today", name: String(localized: "Today")) }
 
     let id: String
     let name: String
@@ -41,8 +43,10 @@ struct WidgetReminderFolder: AppEntity {
 }
 
 struct WidgetReminderFolderQuery: EntityQuery {
+    func defaultResult() async -> WidgetReminderFolder? { .today }
+
     func suggestedEntities() async throws -> [WidgetReminderFolder] {
-        [WidgetReminderFolder(id: "today", name: String(localized: "Today")),
+        [WidgetReminderFolder.today,
          WidgetReminderFolder(id: "inbox", name: String(localized: "Inbox"))]
             + (TodayWidgetSnapshot.read()?.folders ?? []).map { WidgetReminderFolder(id: $0.id, name: $0.name) }
     }
@@ -56,7 +60,16 @@ private struct TodayEntry: TimelineEntry {
     let date: Date
     var title = String(localized: "Today")
     var symbol = "calendar"
+    var folderID = "today"
     let items: [TodayWidgetSnapshot.Item]?
+
+    var folderURL: URL? {
+        var components = URLComponents()
+        components.scheme = "duewisp"
+        components.host = "folder"
+        components.queryItems = [URLQueryItem(name: "id", value: folderID)]
+        return components.url
+    }
 }
 
 private struct TodayProvider: AppIntentTimelineProvider {
@@ -93,7 +106,7 @@ private struct TodayProvider: AppIntentTimelineProvider {
                 (folder.id == "inbox" ? $0.folderID == nil : $0.folderID == folder.id)
         }
         let name = snapshot?.folders?.first { $0.id == folder.id }?.name ?? folder.name
-        return TodayEntry(date: date, title: name, symbol: folder.id == "inbox" ? "tray" : "folder", items: items)
+        return TodayEntry(date: date, title: name, symbol: folder.id == "inbox" ? "tray" : "folder", folderID: folder.id, items: items)
     }
 }
 
@@ -102,12 +115,13 @@ private struct TodayWidgetView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entry: TodayEntry
     @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 22
+    private let iconSpacing: CGFloat = 8
     private var headerSpacing: CGFloat { family == .systemSmall ? 4 : 6 }
-    @ScaledMetric(relativeTo: .footnote) private var rowSpacing: CGFloat = 6
+    @ScaledMetric(relativeTo: .footnote) private var rowSpacing: CGFloat = 10
 
     private var checklistRowLimit: Int {
         switch family {
-        case .systemMedium: dynamicTypeSize.isAccessibilitySize ? 1 : 3
+        case .systemSmall, .systemMedium: dynamicTypeSize.isAccessibilitySize ? 1 : 3
         case .systemLarge: dynamicTypeSize.isAccessibilitySize ? 3 : 8
         default: .max
         }
@@ -120,11 +134,12 @@ private struct TodayWidgetView: View {
             if let items = entry.items, !items.isEmpty {
                 GeometryReader { space in
                     let maxRows = max(1, Int(space.size.height / iconWidth))
-                    let counts = (1...min(items.count, maxRows, checklistRowLimit)).reversed()
+                    let counts = (1...min(maxRows, checklistRowLimit)).reversed()
+                    let fittedSpacing = (space.size.height / CGFloat(checklistRowLimit) - iconWidth).rounded(.down)
+                    let spacing = dynamicTypeSize.isAccessibilitySize ? rowSpacing : max(rowSpacing, fittedSpacing)
                     ViewThatFits(in: .vertical) {
                         ForEach(counts, id: \.self) { count in
-                            reminderList(items, limit: count, spacing: rowSpacing)
-                            reminderList(items, limit: count, spacing: 0)
+                            reminderList(items, limit: count, spacing: spacing)
                         }
                         Text("\(items.count) reminders")
                             .font(.subheadline)
@@ -145,8 +160,11 @@ private struct TodayWidgetView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Label(entry.title, systemImage: entry.symbol)
+        HStack(spacing: iconSpacing) {
+            Image(systemName: entry.symbol)
+                .frame(width: iconWidth)
+                .accessibilityHidden(true)
+            Text(entry.title)
                 .lineLimit(1)
             Spacer(minLength: 0)
             if let count = entry.items?.count, count > 0 {
@@ -162,14 +180,13 @@ private struct TodayWidgetView: View {
     }
 
     private func reminderList(_ items: [TodayWidgetSnapshot.Item], limit: Int, spacing: CGFloat) -> some View {
-        let displayed = items.prefix(limit)
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(displayed.indices, id: \.self) { index in
-                let item = displayed[index]
-                if displayed.count > 1 {
-                    Spacer(minLength: spacing)
-                }
-                HStack(spacing: 12) {
+        let displayed = items.prefix(limit).enumerated().map { index, item in
+            (key: item.id ?? "preview-\(index)", item: item)
+        }
+        return VStack(alignment: .leading, spacing: spacing) {
+            ForEach(displayed, id: \.key) { row in
+                let item = row.item
+                HStack(spacing: iconSpacing) {
                     if let unlock = item.completionUnlockAt, unlock > entry.date {
                         Image(systemName: "lock.circle")
                             .font(.subheadline.weight(.semibold))
@@ -188,6 +205,23 @@ private struct TodayWidgetView: View {
                             .font(.footnote)
                             .lineLimit(1)
                         Spacer(minLength: 0)
+                        if family != .systemSmall, let dueDate = item.dueDate {
+                            let calendar = Calendar.current
+                            let overdueDays = calendar.dateComponents(
+                                [.day],
+                                from: calendar.startOfDay(for: dueDate),
+                                to: calendar.startOfDay(for: entry.date)
+                            ).day ?? 0
+                            if overdueDays > 0 {
+                                Text("\(overdueDays)d ago")
+                                    .font(.caption2)
+                                    .foregroundStyle(.red)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .accessibilityLabel(Text(RelativeDateTimeFormatter().localizedString(
+                                        from: DateComponents(day: -overdueDays)
+                                    )))
+                            }
+                        }
                         if item.hasAlarm == true {
                             Image(systemName: "alarm")
                                 .font(.footnote)
@@ -199,9 +233,11 @@ private struct TodayWidgetView: View {
                 .frame(minHeight: iconWidth)
                 .fixedSize(horizontal: false, vertical: true)
                 .privacySensitive()
+                .transition(.opacity)
             }
         }
-        .padding(.top, displayed.count == 1 ? spacing : 0)
+        .padding(.top, spacing)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
