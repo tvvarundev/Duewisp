@@ -503,7 +503,7 @@ struct ContentView: View {
         let expanded = homeView == .mixed ? expandedFolders : []
 
         let isVisibleList = destination == openedFolder
-        let canSelectReminders = isVisibleList && destination != .deleted && (destination != nil || homeView != .folders)
+        let canSelectReminders = isVisibleList && (destination != nil || homeView != .folders)
         let selection = Binding<Set<ReminderRowID>>(
             get: { selectedReminderRows },
             set: { rows in
@@ -540,6 +540,13 @@ struct ContentView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                        }
+                        .tag(ReminderRowID(reminder: reminder.persistentModelID, section: .deleted))
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button("Restore", systemImage: "arrow.uturn.backward") {
+                                restoreDeletedReminders([reminder.persistentModelID])
+                            }
+                            .tint(.accentColor)
                         }
                     }
                 }
@@ -614,14 +621,22 @@ struct ContentView: View {
         .contentMargins(.top, 0, for: .scrollContent)
         .environment(\.editMode, isVisibleList ? $reminderEditMode : .constant(.inactive))
         .animation(.default, value: canSelectReminders && reminderEditMode.isEditing)
-        .alert("Delete selected reminders?", isPresented: Binding(
+        .alert(destination == .deleted ? "Permanently Delete Reminders?" : "Delete selected reminders?", isPresented: Binding(
             get: { openedFolder == destination && pendingDeletionIDs != nil },
             set: { if !$0 && openedFolder == destination { pendingDeletionIDs = nil } }
         ), presenting: pendingDeletionIDs) { ids in
             Button("Delete", role: .destructive) {
-                deleteSelectedReminders(ids)
+                if destination == .deleted {
+                    permanentlyDeleteReminders(ids)
+                } else {
+                    deleteSelectedReminders(ids)
+                }
             }
             Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            if destination == .deleted {
+                Text("These reminders will be permanently removed.")
+            }
         }
         .alert("Couldn’t Save Changes", isPresented: Binding(
             get: { selectedTab == .reminders && openedFolder == destination && showingSaveError },
@@ -660,14 +675,37 @@ struct ContentView: View {
                 }
                 .labelStyle(.iconOnly)
                 .disabled(selectedReminderRows.isEmpty)
-                Menu("Selection Options", systemImage: "ellipsis") {
-                    Button("Mark as Completed", systemImage: "largecircle.fill.circle", action: completeSelectedReminders)
-                        .disabled(completableSelection(at: .now).isEmpty)
+                if destination == .deleted {
+                    Button("Restore Selected Reminders", systemImage: "arrow.uturn.backward") {
+                        restoreDeletedReminders(Set(selectedReminderRows.map(\.reminder)))
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(selectedReminderRows.isEmpty)
+                    Button("Select All", action: selectAllDeletedReminders)
+                        .disabled(deletedReminders.isEmpty)
+                } else {
+                    Menu("Selection Options", systemImage: "ellipsis") {
+                        Button("Mark as Completed", systemImage: "largecircle.fill.circle", action: completeSelectedReminders)
+                            .disabled(completableSelection(at: .now).isEmpty)
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(selectedReminderRows.isEmpty)
                 }
-                .labelStyle(.iconOnly)
-                .disabled(selectedReminderRows.isEmpty)
             }
-        } else if destination != .completed && destination != .upcoming && destination != .deleted {
+        } else if destination == .deleted {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu("Deleted Reminder Options", systemImage: "ellipsis.circle") {
+                    Button("Select Reminders", systemImage: "checkmark.circle") {
+                        withAnimation { reminderEditMode = .active }
+                    }
+                    Button("Select All", action: selectAllDeletedReminders)
+                    Button("Delete All", systemImage: "trash", role: .destructive) {
+                        pendingDeletionIDs = Set(deletedReminders.map(\.persistentModelID))
+                    }
+                }
+                .disabled(deletedReminders.isEmpty)
+            }
+        } else if destination != .completed && destination != .upcoming {
             ToolbarItem(placement: .topBarTrailing) {
                 newReminderButton {
                     switch destination {
@@ -689,6 +727,33 @@ struct ContentView: View {
         withAnimation {
             selectedReminderRows.removeAll()
             reminderEditMode = .inactive
+        }
+    }
+
+    private func selectAllDeletedReminders() {
+        withAnimation {
+            reminderEditMode = .active
+            selectedReminderRows = Set(deletedReminders.map {
+                ReminderRowID(reminder: $0.persistentModelID, section: .deleted)
+            })
+        }
+    }
+
+    private func restoreDeletedReminders(_ ids: Set<PersistentIdentifier>) {
+        withAnimation {
+            for reminder in deletedReminders where ids.contains(reminder.persistentModelID) {
+                reminder.deletedAt = nil
+            }
+            if saveChanges() { finishSelection() }
+        }
+    }
+
+    private func permanentlyDeleteReminders(_ ids: Set<PersistentIdentifier>) {
+        withAnimation {
+            for reminder in deletedReminders where reminder.deletedAt != nil && ids.contains(reminder.persistentModelID) {
+                modelContext.delete(reminder)
+            }
+            if saveChanges() { finishSelection() }
         }
     }
 
@@ -910,7 +975,7 @@ struct ContentView: View {
     }
 
     private enum ReminderListSection: Hashable {
-        case today, upcoming, search, completed, folderHistory
+        case today, upcoming, search, completed, folderHistory, deleted
         case folder(PersistentIdentifier?)
     }
 
