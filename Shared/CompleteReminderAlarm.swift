@@ -1,5 +1,6 @@
 import Foundation
 import AppIntents
+import OSLog
 #if !ALARM_ACTIVITY_EXTENSION
 import SwiftData
 import UIKit
@@ -101,11 +102,12 @@ struct CompleteWidgetReminder: LiveActivityIntent {
               let reminder = try context.fetch(query).first(where: { $0.persistentModelID.id == id.id }),
               (reminder.availableAt ?? .distantPast) <= now,
               (reminder.completionUnlockAt ?? .distantPast) <= now else {
-            TodayWidgetUpdates.refresh(from: context)
+            TodayWidgetUpdates.refresh(from: context, reloadTimeline: false)
             return .result()
         }
         let changesAlerts = ReminderNotifications.Alert(reminder) != nil ||
             (reminder.repeatMode != nil && reminder.isDateOnly != true)
+        let previousOccurrenceID = reminder.scheduledOccurrenceID
         reminder.complete(in: context, at: now)
         do {
             try context.save()
@@ -113,10 +115,12 @@ struct CompleteWidgetReminder: LiveActivityIntent {
             context.rollback()
             throw error
         }
-        TodayWidgetUpdates.refresh(from: context)
+        if reminder.scheduledOccurrenceID == previousOccurrenceID {
+            TodayWidgetUpdates.recordCompletion(id: identifier, isCalendarEvent: false, from: context)
+        } else {
+            TodayWidgetUpdates.refresh(from: context, reloadTimeline: false)
+        }
         guard changesAlerts else { return .result() }
-        let alerts = try context.fetch(query).compactMap(ReminderNotifications.Alert.init)
-        let groups = try context.fetch(FetchDescriptor<AlarmGroup>()).flatMap(\.schedule)
         let application = UIApplication.shared
         var backgroundID = UIBackgroundTaskIdentifier.invalid
         func finishBackgroundTask() {
@@ -128,11 +132,11 @@ struct CompleteWidgetReminder: LiveActivityIntent {
             finishBackgroundTask()
         }
         if backgroundID == .invalid {
-            await ReminderNotifications.sync(alerts, groupedAlarms: groups, requestPermission: false)
+            await syncAlerts(in: context, query: query)
         } else {
             Task { @MainActor in
                 defer { finishBackgroundTask() }
-                await ReminderNotifications.sync(alerts, groupedAlarms: groups, requestPermission: false)
+                await syncAlerts(in: context, query: query)
             }
         }
         #endif
@@ -141,12 +145,24 @@ struct CompleteWidgetReminder: LiveActivityIntent {
 
     #if !ALARM_ACTIVITY_EXTENSION
     @MainActor
+    private func syncAlerts(in context: ModelContext, query: FetchDescriptor<Reminder>) async {
+        do {
+            let alerts = try context.fetch(query).compactMap(ReminderNotifications.Alert.init)
+            let groups = try context.fetch(FetchDescriptor<AlarmGroup>()).flatMap(\.schedule)
+            await ReminderNotifications.sync(alerts, groupedAlarms: groups, requestPermission: false)
+        } catch {
+            Logger(subsystem: "com.duewisp.app", category: "Widget")
+                .error("Could not load alerts after widget completion: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    @MainActor
     private func completeCalendarEvent(in context: ModelContext) throws {
         let now = Date.now
         guard let event = TodayWidgetSnapshot.read()?.dueItems(at: now).first(where: {
             $0.calendarDay != nil && $0.id == identifier
         }) else {
-            TodayWidgetUpdates.refresh(from: context)
+            TodayWidgetUpdates.refresh(from: context, reloadTimeline: false)
             return
         }
 
@@ -168,7 +184,7 @@ struct CompleteWidgetReminder: LiveActivityIntent {
                 throw error
             }
         }
-        TodayWidgetUpdates.refresh(from: context)
+        TodayWidgetUpdates.recordCompletion(id: eventID, isCalendarEvent: true, from: context)
     }
     #endif
 

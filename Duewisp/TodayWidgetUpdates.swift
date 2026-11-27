@@ -5,7 +5,40 @@ import WidgetKit
 
 enum TodayWidgetUpdates {
     @MainActor
-    static func refresh(from context: ModelContext, calendarItems: [TodayWidgetSnapshot.Item]? = nil) {
+    static func recordCompletion(
+        id: String, isCalendarEvent: Bool, from context: ModelContext
+    ) {
+        guard let url = TodayWidgetSnapshot.fileURL,
+              var snapshot = TodayWidgetSnapshot.read() else {
+            refresh(from: context, reloadTimeline: false)
+            return
+        }
+
+        if isCalendarEvent {
+            var completedIDs = Set(snapshot.completedCalendarIDs ?? [])
+            guard completedIDs.insert(id).inserted else { return }
+            snapshot.completedCalendarIDs = completedIDs.sorted()
+        } else {
+            guard let index = snapshot.items.firstIndex(where: { $0.id == id }) else {
+                refresh(from: context, reloadTimeline: false)
+                return
+            }
+            snapshot.items.remove(at: index)
+        }
+
+        do {
+            try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
+        } catch {
+            refresh(from: context, reloadTimeline: false)
+        }
+    }
+
+    @MainActor
+    static func refresh(
+        from context: ModelContext,
+        calendarItems: [TodayWidgetSnapshot.Item]? = nil,
+        reloadTimeline: Bool = true
+    ) {
         guard let url = TodayWidgetSnapshot.fileURL else { return }
 
         do {
@@ -49,7 +82,7 @@ enum TodayWidgetUpdates {
             )
             guard previous != snapshot else { return }
             try JSONEncoder().encode(snapshot).write(to: url, options: .atomic)
-            WidgetCenter.shared.reloadTimelines(ofKind: TodayWidgetSnapshot.kind)
+            if reloadTimeline { WidgetCenter.shared.reloadTimelines(ofKind: TodayWidgetSnapshot.kind) }
         } catch {
             Logger(subsystem: "com.duewisp.app", category: "Widget")
                 .error("Could not refresh the Today widget: \(error.localizedDescription, privacy: .private)")

@@ -4,6 +4,8 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+private let reminderTitleInsetReduction: CGFloat = 4
+
 struct ContentView: View {
     @AppStorage("showsCalendarItems") private var showsCalendarItems = false
     @AppStorage("showsBirthdays") private var showsBirthdays = true
@@ -13,6 +15,7 @@ struct ContentView: View {
     @AppStorage("reminderHomeView") private var savedHomeView = ""
     @AppStorage("homeFolderOrder") private var homeFolderOrder = Data()
     @AppStorage("mixedExpandedFolders") private var mixedExpandedFolders = Data()
+    @ScaledMetric(relativeTo: .title2) private var addReminderControlWidth: CGFloat = 44
     @Environment(\.calendar) private var calendar
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.modelContext) private var modelContext
@@ -968,10 +971,17 @@ struct ContentView: View {
 
     private func addReminderRow(in name: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label("Add Reminder", systemImage: "plus")
-                .font(.subheadline)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                Image(systemName: "plus")
+                    .font(.body)
+                    .frame(width: 24)
+                    .frame(width: max(44, addReminderControlWidth) - reminderTitleInsetReduction, alignment: .leading)
+                    .accessibilityHidden(true)
+                Text("Add Reminder")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .accessibilityLabel("Add reminder to \(name)")
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -1307,12 +1317,13 @@ private struct ReminderSelectionRow<Control: View, Label: View>: View {
 
     var body: some View {
         let controlWidth = max(44, scaledControlWidth)
-        let labelWidth = measurement.map { max(0, $0.fullRowWidth - controlWidth) }
+        let titleInset = controlWidth - reminderTitleInsetReduction
+        let labelWidth = measurement.map { max(0, $0.fullRowWidth - titleInset) }
 
         label()
             .frame(width: labelWidth, alignment: .leading)
             .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
-            .padding(.leading, labelWidth == nil && !isSelecting ? controlWidth : 0)
+            .padding(.leading, labelWidth == nil && !isSelecting ? titleInset : 0)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
             .overlay(alignment: labelWidth == nil ? .leading : .trailing) {
                 ZStack {
@@ -1320,7 +1331,7 @@ private struct ReminderSelectionRow<Control: View, Label: View>: View {
                 }
                 .frame(width: controlWidth)
                 .animation(.default, value: isSelecting)
-                .padding(.trailing, labelWidth ?? 0)
+                .padding(.trailing, labelWidth.map { max(0, $0 - reminderTitleInsetReduction) } ?? 0)
             }
             .transaction(value: isSelecting) { $0.animation = nil }
         .onGeometryChange(for: RowMeasurement?.self) { proxy in

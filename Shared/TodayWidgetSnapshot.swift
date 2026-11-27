@@ -23,7 +23,7 @@ struct TodayWidgetSnapshot: Codable, Equatable {
     }
 
     var folders: [Folder]? = nil
-    let items: [Item]
+    var items: [Item]
     var calendarItems: [Item]? = nil
     var completedCalendarIDs: [String]? = nil
 
